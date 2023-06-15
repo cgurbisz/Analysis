@@ -1,0 +1,41 @@
+---
+title: "flux time calc"
+author: "Cassie Gurbisz"
+date: "3/10/2023"
+output: html_document
+---
+
+OXYGEN
+rate umol/m2/h
+instrument accuracy mg/l
+vol chamber volume m3
+```{r}
+hourfun_o2 <- function(rate, acc, vol)
+{mg = rate*32*0.018/1000000/vol #convert rate umol/m2/h to mg/l/h based on user-provided chamber volume and aerial flux rate
+(acc*3)/mg #divide accuracy (mg/l) by expected change (mg/l/h) to get time (h)
+}
+```
+
+Ruppia NPP rates are 10-200 mmol/m2/h = 6000-15000 umol/m2/h
+```{r}
+rates = seq(500, 5000, 500)
+accs = c(0.16, 0.4)
+vols_l = c(5, 10, 15, 20)
+vols_m3 = vols_l * 0.001
+
+do_times <- hourfun_o2(rates, 0.16, 0.015)
+plot(rates, do_times)
+```
+
+DIC
+accuracy is 4 umol/kg = 4 mmol/m3
+1 m3 water = 1000 kg
+```{r}
+hourfun_dic <- function(rate, acc, vol)
+{chng = rate*0.018/vol
+acc/chng
+}
+
+hourfun_dic(0.41, 4, vols)
+```
+
