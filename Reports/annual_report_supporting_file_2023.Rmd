@@ -1,0 +1,448 @@
+---
+title: "Collaborative Research: How are estuarine carbon and alkalinity dynamics influenced by macrobiota?" 
+subtitle: "Award 2148951: Annual project report"
+author: "Cassie Gurbisz, St. Mary's College of Maryland"
+output: pdf_document
+fontsize: 12pt
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(here)
+library(survival)
+library(viridis)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+```{r}
+#Read in oxygen logger data. Times are in EST.
+do_files <- list.files(here::here("Data/loggers"), pattern = "DO")
+do_names <-substr(do_files, 12, 22)
+col_names = c("timestamp", "datetime_utc", "datetime_est", "battery", "temp_c", "do_mg_l", "do_pct_sat", "q")
+
+do <- paste(here::here("Data/loggers/"), do_files, sep = "") %>%
+  set_names(do_names) %>%
+  map_dfr(read_csv, skip = 9, col_names = col_names, .id = "id") %>%
+  select(id, datetime_est, temp_c, do_mg_l, do_pct_sat) %>%
+  mutate(date = date(datetime_est),
+         id = str_replace(id, pattern = "_DO", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = substr(id, 8, 8),
+         datetime = round_date(datetime_est, "5 mins")) %>%
+  select(-datetime_est)
+```
+
+```{r}
+#Read in pH logger data and convert to EST.
+ph_files <- list.files(here::here("Data/loggers"), pattern = "PH")
+ph_names <-substr(ph_files, 12, 22)
+
+ph <- paste(here::here("Data/loggers/"), ph_files, sep = "") %>%
+  set_names(ph_names) %>%
+  map_dfr(read_csv, .id = "id") %>%
+  mutate(datetime = mdy_hm(datetime),
+         date = date(datetime),
+         id = str_replace(id, pattern = "_PH", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = substr(id, 8, 8),
+         datetime = round_date(datetime, "5 mins")) %>%
+  select(id, ph, datetime, date, site, chamber_id) %>%
+  filter(id != "YOR_BR_A")
+```
+
+```{r}
+#Read in HOBO logger data and convert to EST.
+depth_files <- list.files(here::here("Data/loggers"), pattern = "DEPTH")
+depth_names <-substr(depth_files, 12, 25)
+
+depth <- paste(here::here("Data/loggers/"), depth_files, sep = "") %>%
+  set_names(depth_names) %>%
+  map_dfr(read_csv, .id = "id") %>%
+  mutate(datetime = mdy_hm(datetime),
+         date = date(datetime),
+         id = str_replace(id, pattern = "_DEPTH", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = "Z",
+         treatment = "AMBIENT",
+         datetime = round_date(datetime, "5 mins"),
+         depth_m = depth_m + 0.2) %>%
+  select(id, depth_m, datetime, date, site, chamber_id)
+
+depth_join <- depth %>%
+  select(datetime, date, site, depth_m)
+```
+
+```{r}
+#Read in PAR logger data. Times are in EST.
+par_files <- list.files(here::here("Data/loggers"), pattern = "PAR")
+par_names <-substr(par_files, 12, 23)
+par_col_names = c("timestamp", "datetime_utc", "datetime_est", "battery", "temp_c", "par_umol_m2_s", "acc_x", "acc_y", "acc_z")
+
+par <- paste(here::here("Data/loggers/"), par_files, sep = "") %>%
+  set_names(par_names) %>%
+  map_dfr(read_csv, skip = 7, col_names = par_col_names, .id = "id") %>%
+  select(id, datetime_est, par_umol_m2_s) %>%
+  mutate(date = date(datetime_est),
+         id = str_replace(id, pattern = "_PAR", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = "Z",
+         datetime = round_date(datetime_est, "5 mins")) %>%
+  select(-datetime_est)
+```
+
+```{r}
+#Read in chamber info and SAV data. Convert times to EST.
+times <- read_csv(here::here("Data/sample_times.csv")) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  drop_na(date) %>%
+  select(date, T1, T2, id, site, chamber_id, treatment) %>%
+  mutate(T1 = ymd_hms(paste(date, T1, sep = " ")),
+         T2 = ymd_hms(paste(date, T2, sep = " ")),
+         T1 = T1 + minutes(15),
+         T2 = T2 - minutes(5))
+
+biomass <- read_csv(here::here("Data/biomass.csv")) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  drop_na(date) %>%
+  filter(ag_bg != "animal") %>%
+  mutate(site_pretty = case_when(site == "YOR_FW" ~ "Fresh York",
+                                 site == "YOR_BR" ~ "Brackish York",
+                                 site == "POT_FW" ~ "Fresh Potomac",
+                                 site == "POT_BR" ~ "Brackish Potomac"))
+
+sav_weight <- read_csv(here::here("Data/biomass.csv")) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  drop_na(date) %>%
+  group_by(date, id, site, chamber_id, ag_bg) %>%
+  summarize(sav_wt = sum(dry_mass_g)) %>%
+  filter(ag_bg == "ag") %>%
+  select(-ag_bg)
+
+vols <- read_csv(here::here("Data/chamber_volume_calcs.csv")) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_")) %>%
+  drop_na(date) %>%
+  select(date, id, vol_l)
+```
+
+```{r}
+#Join logger data for time series plots.
+logger_join <- do %>%
+  full_join(ph) %>%
+  full_join(depth) %>%
+  full_join(par) %>%
+  full_join(times, multiple = "all") %>%
+  group_by(date, site, treatment, chamber_id) %>%
+  filter(datetime >= T1 & datetime <= T2) %>%
+  mutate(site_pretty = case_when(site == "YOR_FW" ~ "Fresh York",
+                                 site == "YOR_BR" ~ "Brackish York",
+                                 site == "POT_FW" ~ "Fresh Potomac",
+                                 site == "POT_BR" ~ "Brackish Potomac"),
+         treatment = case_when(treatment == "AMBIENT" ~ "AMB",
+                               TRUE ~ treatment))
+```
+
+## Goals
+
+The overall objective of the project is to improve understanding of the role that macrobiota play in estuarine carbon and alkalinity dynamics. The project has seven major goals, which are accomplished by PIs at five institutions funded by NSF: The Pennsylvania State University (PSU), Virginia Institute of Marine Science (VIMS), University of Maryland Center for Environmental Sciences (UMCES), Woods Hole Oceanographic Institution (WHOI), and Saint Mary’s College of Maryland (SMCM). We also have a PI from one collaborating institution on the project, Edward Stets of the United States Geological Survey (USGS), whose salary is paid directly by USGS.
+
+We are organizing our five project reports such that each report lists all seven major goals, with the remainder of each report focused on institution-specific activities, accomplishments, products, etc. The major goals of the project are:
+
+**Goal 1.** Create a high-quality characterization of the seasonal and interannual variability of the CO~2~ system in two tidal tributaries, the Potomac and York Rivers. Although some high-quality dissolved inorganic carbon (DIC) and pCO~2~ data exist for the York River estuary, there are no high-quality CO~2~-system data for the Potomac. The associated hypothesis (H3) is that alkalinity sources and sinks in estuaries are highly seasonal, with summer fluxes dominated by net calcification and sulfate reduction and winter fluxes due to net CaCO~3~ dissolution. The responsible PIs are Fantle (PSU), Hardison (VIMS), Rivest (VIMS), Wang (WHOI), and Woodland (UMCES).
+
+**Goal 2.** Measure the distribution of benthic fauna in both tidal tributaries. Current benthic monitoring surveys do not capture seasonality in benthic fauna distributions, nor do they record shell mass, information that is necessary for scaling up flux measurements. Therefore, we will survey benthic faunal assemblage at the same spatial and temporal resolution as the CO~2~-system measurements (Goal 1). The associated hypothesis (H2) is that alkalinity sinks in estuaries are favored when riverine alkalinity is high and when benthic fauna or submerged aquatic vegetation (SAV) are present in sufficient quantities. The responsible PI is Woodland (UMCES).
+
+**Goal 3.** Measure carbon and alkalinity fluxes of macrobiota, such as tidal wetlands, SAV, and benthic fauna. Currently, there is a lack of information on seasonal and interannual variability in these rates and how seasonal changes in physiology can lead to seasonal changes in water chemistry. The associated hypotheses are H3 (see Goal 1) and (H1) that tidal wetlands are a source of alkalinity to estuaries and this source increases with salinity, tidal wetland productivity, and tidal range. The responsible PIs are Najjar (PSU), Gurbisz (SMCM), Hardison (VIMS), and Rivest (VIMS).
+
+**Goal 4.** Create 2-D, time-varying carbon and alkalinity flux maps for each type of macrobiota. Simple empirical models will be developed to scale up the localized carbon and alkalinity flux measurements to the tributary scale. The associated hypothesis (H4) is that estuaries with high-alkalinity rivers and low tidal marsh areas are sinks of alkalinity and sources of atmospheric CO~2~ while those with low-alkalinity rivers and high tidal marsh areas are sources of alkalinity and sinks of atmospheric CO~2~. The responsible PI is Najjar (PSU).
+
+**Goal 5.** Evaluate historical CO~2~-system data. Historical measurements made by the USGS and Chesapeake Bay Program will be mined to develop box-model estimates of net ecosystem production and calcification in the Potomac and York River estuaries from 1995 to 2020. This goal is associated with the H4 hypothesis (see Goal 4). The responsible PIs are Harris (UMCES), Herrmann (PSU), Najjar (PSU), and Stets (USGS).
+
+**Goal 6.** Evaluate the 3-D biogeochemical model. 3-D numerical modeling will allow us to scale up the new and historical data to the tributaries and assess the spatio-temporal flux variability, which cannot be fully quantified by discrete observations. The macrobiota carbon and alkalinity flux maps (Goal 4) will be incorporated into the model, and results will be evaluated with the new (Goal 1) and historical (Goal 5) CO~2~-system measurements. Responsible PIs are Friedrichs (VIMS) and St. Laurent (VIMS).
+
+**Goal 7.** Extend findings of the project to other systems through meta-analysis. We will create mean alkalinity budgets for additional systems to see if the relationship that was discovered for the Chesapeake Bay estuary, that total alkalinity concentration in rivers is a major driver of source/sink behavior in the estuary, extends to other systems. The responsible PI is (Najjar)(PSU).
+
+
+## Acomplishments
+
+SMCM is responsible for measuring dissolved inorganic carbon (DIC) and alkalinity (TA) fluxes of submerged aquatic vegetation (SAV), which is a component of project **Goal 3**. Our primary objective is to conduct in-situ benthic chamber incubations to measure SAV fluxes at four locations (tidal freshwater York/Pamunkey River, brackish lower York, tidal fresh Potomac, and brackish lower Potomac) four times per year in each of the two project years starting in spring 2023 (Fig. 1). These measurements will capture the effects of environmental conditions (light and temperature) and biological processes (primary production, plant senescence, and remineralization) on DIC and TA dynamics as they evolve throughout the year. Our project collaborators will then incorporate these data into numerical simulation models (**Goal 6**) and empirically-derived flux maps (**Goal 4**) to contextualize rates at the estuary scale.
+
+```{r fig-1, fig.cap = "SAV study sites. The Chickamuxen Creek and Pamunkey sites contain freshwater; Guinea Marsh and St. George Island are brackish."}
+knitr::include_graphics(here::here("Img/sites.png"))
+```
+
+To date, we have constructed benthic chambers and conducted spring flux measurements at three of the four SAV sites (all but the tidal fresh Potomac). We had anticipated completing all spring SAV work by now; however, unusually persistent high winds and water levels caused multiple delays in fieldwork.
+
+Flux measurements included three replicates each of SAV + water + sediment, water + sediment, and water-only treatments in both the light and dark (3 replicates x 6 treatments = 18 chambers), enabling us to isolate effects of the SAV on community DIC and TA fluxes (Fig. 2). The SAV + water + sediment and water + sediment benthic chambers each consisted of a 15 cm diameter x 23 cm long section of PVC pipe fitted with a gas-tight polyethylene bag containing a sampling port. The flexible bag allows for the transfer of external turbulence into the chamber, eliminating the need for an elaborate stirring apparatus. For water-only treatments, we used a polyethylene bag fitted with a sampling port. For dark treatments, we covered each chamber or with a 0.1 mm black plastic bag. 
+
+```{r fig-2, fig.cap = "SAV flux experimental design."}
+knitr::include_graphics(here::here("Img/sav_treatments.png"))
+```
+
+For each replicate set of benthic chambers, we inserted one clear and one dark chamber over rooted SAV as well as the adjacent bare sediment (Fig. 3). For the water only treatment, we filled one clear and one dark polyethelyene bag with ambient water and anchored the bags to the bottom. Immediately upon sealing each chamber, we collected 350 ml of water through the sampling port using 60-ml syringes and then injected the same volume of ambient water into the chamber using a syringe. After incubating for ~2-4 h, a second set of water samples were collected for DIC and TA analysis. To calculate the volume of each chamber, we injected a 50 ml tracer solution into each chamber (150 g l^-1^ NaCl in freshwater; 33 g l^-1^ NaBr in brackish water) while agitating the chamber bags to mix the solution, and collected an additional water sample for conductivity or Br^-^ analysis. All SAV chambers and two sediment+water and water chambers (one light and one dark of each) additionally contained a dissolved oxygen (PME MiniDOT) and pH logger (Onset HOBO) to measure higher frequency fluctuations in metabolic activity in response to light and temperature.
+
+```{r fig-3, fig.cap = "Photo of light (left) and dark (right) SAV chamber installed at the Brackish York site on 2 June 2023."}
+knitr::include_graphics(here::here("Img/chalk_sav_chambers.png"))
+```
+
+After the incubations were complete, we collected sediment fauna and SAV above- and below-ground biomass from each chamber using a 15 cm diameter cylindrical corer. Samples were rinsed in the field using a 1 mm mesh bag so that any sediment infauna or epiphytic fauna greater than 1 mm would be retained. Upon returning to the laboratory, we separated the SAV by species and fauna by group (snail, clam, worm, etc.), dried the samples to constant weight in a 60^o^C drying oven, and weighed each sample. Benthic and epiphytic fauna samples were then ashed at 550^o^C for 4 h to derive ash-free dry weights.
+
+We plan to calculate calcification rates using the alkalinity anomaly method with Ca^2+^ measurements as a check. A subset of samples will also be analyzed for nitrate + nitrite, ammonium, and sulfate to assess the relative effects of other biogeochemical processes on calcification, as they may be important in these enclosed benthic chambers. We will use the chamber logger data to calculate gross primary production (GPP), respiration (R), and net primary production (NPP) as well as the change in pH. This information will be used to assess the effect of plant metabolism on DIC and TA fluxes. VIMS will analyze the DIC and TA samples, UMCES CBL is responsible for analyzing nutrients and anions, and PSU will analyze Ca^2+^ samples. 
+
+## Results
+
+We do not have significant results to report at this time because water samples have not yet been analyzed. However, preliminary logger and SAV biomass data figures are included below. 
+
+SAV biomass was greatest at the Brackish York site, followed by the Brackish Potomac and Fresh York (Fig. 4). This is consistent with seasonal patterns of SAV biomass across salinity zones of Chesapeake Bay: *Zostera marina* tends to peak in May, whereas brackish SAV communities reach peak biomass during mid-summer followed by a late-summer biomass maximum in freshwater regions. 
+
+```{r fig-4, fig.cap = "SAV and algae biomass (May-June 2023)"}
+
+biomass %>%
+  mutate(ag_bg = case_when(ag_bg == "ag" ~ "above ground",
+                           ag_bg == "bg" ~ "below ground"),
+         species = case_when(species == "cd" ~ "Ceratophyllem demersum",
+                             species == "hv" ~ "Hydrilla verticillata",
+                             species == "lyng" ~ "Lyngbya spp.",
+                             species == "ng" ~ "Najas guadeloupensis",
+                             species == "red_algae" ~ "red algae",
+                             species == "cladophora" ~ "green algae",
+                             species == "rm" ~ "Ruppia maritima",
+                             species == "zm" ~ "Zostera marina",
+                             species == "unknown" ~ "mixed species roots")) %>%
+ggplot(aes(x = chamber_id, y = biomass_g_m2, fill = species)) +
+  geom_bar(stat = "identity") +
+  facet_grid(ag_bg ~site_pretty) +
+  labs(x = "Chamber ID", y = expression("Biomass (g m"^-2*")"), fill = "") +
+  scale_fill_viridis_d() +
+  theme_light() +
+  theme(legend.position = "bottom") +
+  guides(fill=guide_legend(nrow=3))
+```
+
+The Brackish York site had clear, shallow water in contrast to deeper, more turbid water at the Freshwater York and Brackish Potomac sites (Fig. 5). Water levels were unusually high during this sampling period due to wind forcing along much of the U.S. east coast.
+
+```{r fig-5, fig.cap = "Ambient water depth, temperature, and photosynthetically active radiation (PAR) during spring 2023 SAV incubations."}
+
+p1 <- ggplot(logger_join, aes(x = site_pretty, y = depth_m, fill = site_pretty)) +
+  geom_boxplot(alpha = 0.3) +
+  geom_jitter(alpha = 0.5, width = 0.25, aes(color = site_pretty)) +
+  scale_fill_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  scale_color_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  labs(x = "", y = "Depth (m)") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.text.x=element_blank(),
+        plot.margin = margin(b = 0)) 
+
+p2 <- ggplot(logger_join, aes(x = site_pretty, y = par_umol_m2_s, fill = site_pretty)) +
+  geom_boxplot(alpha = 0.3) +
+  geom_jitter(alpha = 0.5, width = 0.25, aes(color = site_pretty)) +
+  scale_fill_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  scale_color_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  labs(x = "", y = expression("PAR ("*mu*"mol m"^-2~"s"^-1*")")) +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.text.x=element_blank(),
+        plot.margin = margin(b = 0, t = 0))
+
+p3 <- logger_join %>%
+  filter(chamber_id == "M") %>%
+ggplot(aes(x = site_pretty, y = temp_c, fill = site_pretty)) +
+  geom_boxplot(alpha = 0.3) +
+  geom_jitter(alpha = 0.5, width = 0.25, aes(color = site_pretty)) +
+  scale_fill_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  scale_color_viridis_d(option = "rocket", begin = 0.2, end = 0.8) +
+  labs(x = "Site", y = expression("Temp. ("*degree*"C)")) +
+  theme_light() +
+  theme(legend.position = "none",
+        plot.margin = margin(t = 0))
+
+p1 + p2 + p3 +  plot_layout(ncol = 1)
+```
+
+```{r}
+#Calculate O2 flux rates.
+o2_change <- function(do){
+  delta_o <- rep(NA, length(do)) 
+  for(i in 2:length(do)) {delta_o[i] = do[i] - do[i-1]}
+  delta_o
+}
+
+
+fluxes <- do %>%
+  full_join(times) %>%
+  left_join(depth_join) %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  filter(datetime >= T1 & datetime <= T2) %>%
+  select(-c(T1, T2)) %>%
+  mutate(flux_mg_l = o2_change(do_mg_l),
+        delta_t_h = 0.08333,
+        flux_water_mg_m2 =if_else(str_detect(treatment, "W"), 
+                                  (flux_mg_l * depth_m) * 1000,
+                                  NA)) %>%
+  summarize(time_h = sum(delta_t_h),
+            rate_mg_l_h = sum(flux_mg_l, na.rm = TRUE)/time_h,
+            flux_water_mg_m2_h = sum(flux_water_mg_m2, na.rm = TRUE)/time_h) %>%
+  full_join(sav_weight) %>%
+  full_join(vols) %>%
+  ungroup() %>%
+  mutate(mean_vol = mean(vol_l, na.rm = TRUE),
+    vol_l = case_when(is.na(vol_l) ~ mean_vol,
+                           TRUE ~ vol_l),
+         mmol_h = (rate_mg_l_h/32) * vol_l,
+         mmol_m2_h = if_else(str_detect(treatment, "W"),
+                             flux_water_mg_m2_h / 32,
+                             mmol_h / 0.018),
+         mmol_g_sav_h = mmol_h / sav_wt,
+    site_pretty = case_when(site == "YOR_FW" ~ "Fresh York",
+                                 site == "YOR_BR" ~ "Brackish York",
+                                 site == "POT_FW" ~ "Fresh Potomac",
+                                 site == "POT_BR" ~ "Brackish Potomac"),
+    Treatment = case_when(treatment == "SAV-D" ~ "SAV dark",
+                                 treatment == "SAV-L" ~ "SAV light",
+                                 treatment == "SED-D" ~ "Sediment dark",
+                                 treatment == "SED-L"~ "Sediment light",
+                                 treatment == "W-D" ~ "Water dark",
+                                 treatment == "W-L" ~ "Water light",
+                                 treatment == "AMBIENT" ~ "Ambient")) %>%
+  select(-c(flux_water_mg_m2_h, mmol_h)) %>%
+  drop_na(site)
+```
+
+General oxygen flux patterns are as expected, with the exception of the Brackish York water-dark treatment, where oxygen concentrations increased instead of decreased, as would be expected in the dark. It is possible that this chamber leaked, or oxygen saturation may have increased due to a 2^o^C temperature decrease in the water chambers.  
+
+```{r fig-6, fig.cap = "Net oxygen concentration change in each chamber. Rates are not normalized to chamber volume (for benthic chambers) or water depth (for water column fluxes)."}
+
+cbpal <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(fluxes, aes(x = chamber_id, y = rate_mg_l_h, fill = Treatment)) +
+  geom_bar(stat="identity", alpha = 0.8) +
+  facet_wrap(~site_pretty) +
+  labs(x = "Chamber ID", y = expression("O"[2]~"flux (mg l"^-1~"h"^-1*")")) +
+  scale_fill_manual(values = cbpal) +
+  theme_light()
+```
+
+
+```{r}
+#Calculate mean and SE O2 flux/m2
+
+se <- function(x) sd(x, na.rm = TRUE) / sqrt(length(x))
+
+means_area <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_m2_h_mean = mean(mmol_m2_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_m2_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "means") %>%
+  mutate(trtmt = case_when(trtmt == "SED" ~ "Sediment",
+                           trtmt == "W" ~ "Water",
+                           TRUE ~ trtmt))
+
+ses_area <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_m2_h_se = se(mmol_m2_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_m2_h_se) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "ses") %>%
+  mutate(trtmt = case_when(trtmt == "SED" ~ "Sediment",
+                           trtmt == "W" ~ "Water",
+                           TRUE ~ trtmt))
+
+flux_summary_area <- means_area %>%
+  left_join(ses_area) %>%
+  mutate(site_pretty = case_when(site == "YOR_FW" ~ "Fresh York",
+                                 site == "YOR_BR" ~ "Brackish York",
+                                 site == "POT_FW" ~ "Fresh Potomac",
+                                 site == "POT_BR" ~ "Brackish Potomac"))
+```
+
+
+```{r}
+#Calculate mean and SE O2 flux per g SAV
+
+means_sav <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_g_sav_h_mean = mean(mmol_g_sav_h, na.rm = TRUE))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_g_sav_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "means") %>%
+  drop_na(means)
+
+ses_sav <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_g_sav_h_mean = se(mmol_g_sav_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_g_sav_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "ses") %>%
+drop_na(ses)
+
+flux_summary_sav <- means_sav %>%
+  left_join(ses_sav) %>%
+  mutate(site_pretty = case_when(site == "YOR_FW" ~ "Fresh York",
+                                 site == "YOR_BR" ~ "Brackish York",
+                                 site == "POT_FW" ~ "Fresh Potomac",
+                                 site == "POT_BR" ~ "Brackish Potomac"))
+```
+
+Aerial net primary production (NPP, derived from light flux measurements), respiration (R, based on dark rates), and gross primary production (GPP = NPP - R) are generally consistent with rates reported for temperate SAV. Aerial oxygen flux rates were calculated by normalizing fluxes to chamber volume and extrapolating to square meters (aerial rate = concentration change x chamber volume / chamber area). SAV and sediment rates for the brackish sites were approximated using the mean of York freshwater chamber volumes because bromide tracer samples have not yet been analyzed. Water column rates were calculated by multiplying the rate of oxygen concentration change by water depth. York Brackish water column rates are not accurate; we plan to explore the feasibility of correcting oxygen concentrations for changes in temperature or, alternatively, discarding the data assuming chamber leakage.
+
+```{r fig-7, fig.cap = "Mean aerial oxygen flux. Rates for the Potomac and York brackish sites are based on estimated chamber volumes because bromide tracer samples have not yet been analyzed."}
+#Plot mean aerial flux.
+ggplot(flux_summary_area, aes(x = name, y = means, fill = name)) +
+   geom_bar(stat = "identity", alpha = 0.8) + 
+   geom_hline(yintercept = 0, linetype = "dashed") +
+   geom_errorbar(aes(ymin = means - ses, ymax = means + ses), width = 0.2) +
+   facet_grid(trtmt ~ site_pretty) +
+   labs(x = "", y = expression("Flux (mmol O"[2]~"m"^-2~"h"^-1*")")) +
+  scale_fill_manual(values = cbpal) +
+   theme_light() +
+  theme(legend.position = "none")
+```
+
+We also calculated NPP, R, and GPP normalized by SAV biomass by multiplying oxygen change (mg/l) by chamber water volume (l), converting to mg O~2~ to mmol, and dividing by SAV dry weight (g). Despite differences in species and SAV biomass, GPP normalized to SAV biomass was consistent across all sites. NPP and R were also similar at the brackish sites but more negative at the freshwater York site, possibly due to high respiration rates driven by high sediment organic matter content.
+
+```{r fig-8, fig.cap = "Oxygen flux normalized to SAV biomass (dry weight). Rates for the Potomac and York brackish sites are based on estimated chamber volumes because bromide tracer samples have not yet been analyzed."}
+#Plot mean SAV-mass flux.
+
+ggplot(flux_summary_sav, aes(x = name, y = means, fill = name)) +
+   geom_bar(stat = "identity", alpha = 0.8) + 
+   geom_hline(yintercept = 0, linetype = "dashed") +
+   geom_errorbar(aes(ymin = means - ses, ymax = means + ses), width = 0.1) +
+  facet_wrap(~site_pretty) +
+   labs(x = "", y = expression("Flux (mmol O"[2]~"g SAV"^-1~"h"^-1*")")) +
+  scale_fill_manual(values = cbpal) +
+   theme_light() +
+  theme(legend.position = "none")
+```
