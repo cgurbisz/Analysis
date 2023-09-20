@@ -1,0 +1,122 @@
+---
+title: "plots"
+output: html_document
+date: "2023-08-23"
+---
+
+```{r}
+load("Data/flux_data.RData")
+
+licor <- read_csv("Data/par.csv")
+
+animals <- read_csv("Data/animals_epiphytes.csv") %>%
+  mutate(site = paste(river, site, sep = "_"),
+         id = paste(site, chamber_id, sep = "_")) %>%
+  group_by(date, id, species_id) %>%
+  summarize(dry_mass_g = sum(dry_mass_g, na.rm = TRUE),
+            organic_g = sum(organic_g, na.rm = TRUE), 
+            inorgainc_g = sum(inorganic_g, na.rm = TRUE))
+
+sediment <- read_csv("Data/biomass.csv") %>%
+  filter(ag_bg == "sediment") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_")) %>%
+  group_by(date, id, species) %>%
+  summarize(dry_mass = sum(dry_mass_g, na.rm = TRUE),
+            dry_mass_aerial = sum(biomass_g_m2, na.rm = TRUE))
+```
+
+```{r}
+ggplot(flux_data, aes(x = chamber_id, y = dic_rate_mmol_m2_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_grid(season~site) +
+  theme_light()
+
+ggplot(flux_data, aes(x = chamber_id, y = ta_rate_mmol_m2_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_grid(season~site) +
+  theme_light()
+
+ggplot(flux_data, aes(x = chamber_id, y = o2_rate_mmol_m2_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_grid(season~site) +
+  theme_light()
+```
+
+```{r}
+ggplot(flux_data, aes(x = dic_rate_mmol_m2_h, y =ta_rate_mmol_m2_h, color = treatment)) +
+  geom_point() +
+  theme_light()
+
+ggplot(flux_data, aes(x = ta_rate_mmol_g_sav_h, y =o2_rate_mmol_g_sav_h, color = treatment, shape = site)) +
+  geom_point() +
+  theme_light()
+```
+
+Calcs
+TA changes in estuaries are related to changes in calcium ion, nitrate, ammonium, and sulfate: DTA = 2DCa2+ + DNH4+ – DNO3– – 2DSO42–
+You find an oxygen increase of about 20 umol/l/h and a TA decrease of maybe 8 umol/l/h. I cannot quickly find typical O2:C ratios for SAV, so let's use a typical value of 1.5 for marine plankton. That means the DIC decline due to photosynthesis would be 13 umol/l/h. The associated DIC decline from calcification would be 8/2 = 4 umol/l/h. So I would expect a total DIC decline of 17 umol/l/h, which is about a third of what's observed.
+
+Photosynthesis consumes ta
+Calcite precipitation consumes ta
+Aerobic oxidation of reduced NH4, Mn2+, Fe2+, sulfide consume ta
+Aerobic respiration produces ta
+Anaerobic respiration produces ta (denitrification, DNRA, sulfate reduction)
+Calcite dissolution produces ta
+
+```{r}
+calcs <- flux_data %>% 
+  filter(site == "YOR_BR" & season == "spring") %>%
+  arrange(chamber_id) %>%
+  select(chamber_id, treatment, dic_rate_mmol_m2_h, ta_rate_mmol_m2_h, o2_rate_mmol_m2_h, ph_change, max_ph) %>%
+  mutate(ta_dic_ratio = ta_rate_mmol_m2_h / dic_rate_mmol_m2_h,
+        dic_metab = case_when(str_detect(treatment, "L") ~ o2_rate_mmol_m2_h / -1.3,
+                               str_detect(treatment, "D") ~ o2_rate_mmol_m2_h * -1),
+         dic_calcif = ta_rate_mmol_m2_h / 2,
+         dic_metab_calc = dic_metab + dic_calcif)
+```
+
+```{r}
+ggplot(calcs, aes(x = chamber_id, y = ta_dic_ratio, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  theme_light()
+```
+
+
+
+
+
+
+```{r}
+#plot biomass
+biomass_list <- biomass %>%
+  group_split(year, season)
+  
+bioplot <- function(x){
+  x %>%
+  mutate(ag_bg = case_when(ag_bg == "ag" ~ "above ground",
+                           ag_bg == "bg" ~ "below ground"),
+         species = case_when(species == "cd" ~ "Ceratophyllem demersum",
+                             species == "hv" ~ "Hydrilla verticillata",
+                             species == "lw" ~ "Lyngbya spp.",
+                             species == "ng" ~ "Najas guadeloupensis",
+                             species == "red_algae" ~ "red algae",
+                             species == "cladophora" ~ "green algae",
+                             species == "rm" ~ "Ruppia maritima",
+                             species == "zm" ~ "Zostera marina",
+                             species == "unknown" ~ "mixed species roots",
+                             species == "va" ~ "Vallisneria americana",
+                             species == "ms" ~ "Myriophyllem spicatum",
+                             species == "pper" ~ "Potamogeton perfoliatus",
+                             species == "ppus" ~ "Potamogeton pusilus",
+                             species == "hd" ~ "Heteranthera dubia",
+                             species == "nm" ~ "Najas minor")) %>%
+    filter(ag_bg != "sediment") %>%
+ggplot(aes(x = chamber_id, y = biomass_g_m2, fill = species)) +
+  geom_bar(stat = "identity") +
+  facet_grid(ag_bg ~site) +
+  labs(x = "Chamber ID", y = expression("SAV biomass (g m"^-2*")"),
+       title = "Macrophyte biomass") +
+  theme_light()}
+
+map(biomass_list, bioplot)
+```

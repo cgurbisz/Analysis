@@ -1,0 +1,358 @@
+---
+title: "Logger data processing"
+output: html_document
+date: "2023-08-14"
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(lubridate)
+library(here)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+```{r}
+#Read in oxygen logger data. Times are in EST.
+do_files <- list.files(here::here("Data/loggers"), pattern = "DO")
+do_names <-substr(do_files, 12, 22)
+col_names = c("timestamp", "datetime_utc", "datetime_est", "battery", "temp_c", "do_mg_l", "do_pct_sat", "q")
+
+do <- paste(here::here("Data/loggers/"), do_files, sep = "") %>%
+  set_names(do_names) %>%
+  map_dfr(read_csv, skip = 9, col_names = col_names, .id = "id") %>%
+  select(id, datetime_est, temp_c, do_mg_l, do_pct_sat) %>%
+  mutate(date = date(datetime_est),
+         id = str_replace(id, pattern = "_DO", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = substr(id, 8, 8),
+         datetime = round_date(datetime_est, "5 mins")) %>%
+  select(-datetime_est)
+```
+
+```{r}
+#Read in pH logger data and convert to EST.
+ph_files <- list.files(here::here("Data/loggers"), pattern = "PH")
+ph_names <-substr(ph_files, 12, 22)
+
+ph <- paste(here::here("Data/loggers/"), ph_files, sep = "") %>%
+  set_names(ph_names) %>%
+  map_dfr(read_csv, .id = "id") %>%
+  mutate(datetime = mdy_hm(datetime),
+         date = date(datetime),
+         id = str_replace(id, pattern = "_PH", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = substr(id, 8, 8),
+         datetime = round_date(datetime, "5 mins")) %>%
+  select(id, ph, datetime, date, site, chamber_id)
+```
+
+
+```{r}
+#Read in HOBO logger data 
+depth_files <- list.files(here::here("Data/loggers"), pattern = "DEPTH")
+depth_names <-substr(depth_files, 12, 25)
+
+depth <- paste(here::here("Data/loggers/"), depth_files, sep = "") %>%
+  set_names(depth_names) %>%
+  map_dfr(read_csv, .id = "id") %>%
+  mutate(datetime = mdy_hm(datetime),
+         date = date(datetime),
+         id = str_replace(id, pattern = "_DEPTH", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = "Z",
+         treatment = "AMBIENT",
+         datetime = round_date(datetime, "5 mins"),
+         depth_m = depth_m + 0.2) %>%
+  select(id, depth_m, datetime, date, site, chamber_id)
+
+depth_join <- depth %>%
+  select(datetime, date, site, depth_m)
+```
+
+
+```{r}
+#Read in PAR logger data. Times are in EST.
+par_files <- list.files(here::here("Data/loggers"), pattern = "PAR")
+par_names <-substr(par_files, 12, 23)
+par_col_names = c("timestamp", "datetime_utc", "datetime_est", "battery", "temp_c", "par_umol_m2_s", "acc_x", "acc_y", "acc_z")
+
+par <- paste(here::here("Data/loggers/"), par_files, sep = "") %>%
+  set_names(par_names) %>%
+  map_dfr(read_csv, skip = 7, col_names = par_col_names, .id = "id") %>%
+  select(id, datetime_est, par_umol_m2_s) %>%
+  mutate(date = date(datetime_est),
+         id = str_replace(id, pattern = "_PAR", replacement = ""),
+         site = substr(id, 1, 6),
+         chamber_id = "Z",
+         datetime = round_date(datetime_est, "5 mins")) %>%
+  select(-datetime_est) 
+
+par_no_id <- par %>%
+  select(date, datetime, site, par_umol_m2_s) %>%
+  drop_na()
+```
+
+
+```{r}
+#Read in chamber info and SAV data. Convert times to EST.
+times <- read_csv(here::here("Data/sample_times_loggers.csv")) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  drop_na(date) %>%
+  select(date, T1, T2, id, site, chamber_id, treatment) %>%
+  mutate(date = mdy(date),
+    T1 = ymd_hms(paste(date, T1, sep = " ")),
+    T2 = ymd_hms(paste(date, T2, sep = " ")))
+```
+
+
+```{r}
+#Join logger data for time series plots.
+logger_join <- do %>%
+  full_join(ph) %>%
+  full_join(depth_join) %>%
+  full_join(par_no_id) %>%
+  full_join(times) %>%
+  mutate(year = year(datetime),
+         month = month(datetime),
+         season = case_when(month %in% 5:6 ~ "spring",
+                            month %in% 7:8 ~ "summer",
+                            month %in% 9:10 ~ "fall")) %>%
+  group_by(date, site, treatment, chamber_id) %>%
+  filter(datetime >= T1 & datetime <= T2) %>%
+  ungroup() %>%
+ mutate(do_mg_l = case_when(season == "summer" & id == "POT_FW_Z" & datetime > ymd_hm("2023-08-02 11:00") & 
+                               datetime < ymd_hm("2023-08-02 13:00") ~ NA,
+                             TRUE ~ do_mg_l))
+
+logger_list <- logger_join %>%
+  group_split(year, season)
+```
+
+
+```{r}
+#Oxygen time series for QAQC - map by year and season
+tsdoplot <- function(x) {ggplot(x, aes(x = datetime, y = do_mg_l, color = chamber_id)) +
+  geom_line() +
+  facet_grid(treatment~site, scales = "free_x") +
+  labs(x = "", y = expression("DO (mg l"^-1*")"),
+       title = paste("Oxygen time series -", x$season[1], x$year[1])) +
+  theme_light() +
+  theme(legend.position = "none")
+}
+
+map(logger_list, tsdoplot)
+```
+
+Oxygen time series are generally as expected, with increases in light chambers - especially those containing SAV - due to primary production and decreases in dark chambers due to respiration. A notable exception are the YOR-BR water treatments. Temperature and water depth also changed, which could have affected oxygen saturation. We also noted that it appeared that the two chamber bags may have been leaking.
+
+```{r}
+tsphplot <- function(x) {ggplot(x, aes(x = datetime, y = ph, color = chamber_id)) +
+  geom_line() +
+  facet_grid(treatment~site, scales = "free_x") +
+  labs(x = "", y = "pH",
+       title = paste("pH time series -", x$season[1], x$year[1])) +
+  theme_light() +
+  theme(legend.position = "none")}
+
+map(logger_list, tsphplot)
+```
+
+YOR_FW is missing pH data due to human logger programming error!
+
+```{r}
+tsplottemp <- function(x){
+  ggplot(x, aes(x = datetime, y = temp_c, color = chamber_id)) +
+  geom_line() +
+  facet_grid(treatment~site, scales = "free_x") +
+  labs(x = "", y = expression("Temp. ("*degree*"C)"),
+       title = "Temperature time series") +
+  theme_light()
+}
+
+map(logger_list, tsplottemp)
+```
+
+```{r}
+ggplot(logger_join, aes(x = datetime, y = depth_m)) +
+  geom_path() +
+  facet_wrap(season~site, scales = "free_x") +
+  labs(x = "", y = "Depth (m)",
+       title = "Water level") +
+  theme_light()
+
+
+ggplot(logger_join, aes(x = datetime, y = par_umol_m2_s)) +
+  geom_path() +
+  facet_wrap(season~site, scales = "free_x") +
+  labs(x = "", y = expression("PAR ("*mu*"mol m"^-2~"s"^-1*")"),
+       title = "PAR at the bottom") +
+  theme_light()
+```
+
+POT_BR and YOR_FW were both deeper and more turbid than YOR_BR.
+
+```{r}
+save(logger_join, file = "Data/loggers_processed.RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#plot DIC TA and DO
+dicplot <- ggplot(dic_flux, aes(x = chamber_id, y = flux_mmol_l_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  lims(y = c(-0.068, 0.026)) +
+  labs(x = "Chamber ID", y = expression(Delta~"DIC (mmol l"^-1~"h"^-1*")"),
+       title = "DIC flux") +
+  theme_light()
+
+taplot <- ggplot(ta_flux, aes(x = chamber_id, y = flux_umol_l_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"TA (umol l"^-1~"h"^-1*")"),
+       title = "TA flux") +
+  theme_light()
+
+doplot <- fluxes %>%
+  filter(chamber_id != "Z") %>%
+  ggplot(aes(x = chamber_id, y = rate_mmol_l_h, fill = treatment)) +
+  geom_bar(stat="identity") +
+  lims(y = c(-0.068, 0.026)) +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"O"[2]~"(mmol l"^-1~"h"^-1*")"),
+       title = "Oxygen flux") +
+  theme_light()
+
+phplot <- ph_summary %>%
+  filter(chamber_id != "Z") %>%
+  ggplot(aes(x = chamber_id, y = ph_change, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"pH"),
+       title = expression("pH change")) +
+  theme_light() 
+
+taplot + dicplot + doplot +  phplot + plot_layout(guides = 'collect') + plot_annotation(caption = "D = dark, L = light; missing values = samples not yet analyzed or sonde programming error.\nFluxes have not been normalized to chamber volume. DIC data are provisional.")
+
+ggsave("sav_ta_dic_do_ph.png", width = 10, height = 6, units = "in", dpi = 300)
+```
+
+
+
+```{r}
+#Calculate mean and SE O2 flux/m2
+
+se <- function(x) sd(x, na.rm = TRUE) / sqrt(length(x))
+
+means_area <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_m2_h_mean = mean(mmol_m2_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_m2_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "means")
+
+ses_area <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_m2_h_se = se(mmol_m2_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_m2_h_se) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "ses")
+
+flux_summary_area <- means_area %>%
+  left_join(ses_area)
+```
+
+
+```{r}
+#Calculate mean and SE O2 flux per g SAV
+
+means_sav <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_g_sav_h_mean = mean(mmol_g_sav_h, na.rm = TRUE))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_g_sav_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "means") %>%
+  drop_na(means)
+
+ses_sav <- fluxes %>%
+  filter(treatment != "AMBIENT") %>%
+  group_by(date, site, treatment) %>%
+  summarize(mmol_g_sav_h_mean = se(mmol_g_sav_h))  %>%
+  separate(treatment, into = c("trtmt", "light_dark")) %>%
+  pivot_wider(names_from = light_dark, values_from = mmol_g_sav_h_mean) %>%
+  mutate(R = D,
+         NPP = L, 
+         GPP = L - D) %>%
+  select(-c(D, L)) %>%
+  pivot_longer(4:6, values_to = "ses") %>%
+drop_na(ses)
+
+flux_summary_sav <- means_sav %>%
+  left_join(ses_sav)
+```
+
+
+```{r}
+#Plot mean aerial flux.
+ggplot(flux_summary_area, aes(x = trtmt, y = means)) +
+   geom_point() + 
+   geom_hline(yintercept = 0, linetype = "dashed") +
+   geom_errorbar(aes(ymin = means - ses, ymax = means + ses), width = 0.2) +
+   facet_grid(site ~ name) +
+   labs(x = "", y = expression("DO flux (mmol O"[2]~"m"^-2~"h"^-1*")"),
+        title = expression("Mean aerial O"[2]~"flux")) +
+   theme_light()
+```
+
+Mean aerial oxygen flux, which normalizes fluxes to chamber volume and extrapolates to square meters. SAV and sediment rates are not included for the brackish sites because we used bromide as a tracer to measure chamber volume. The bromide samples need to be processed by CBL NASL. We used NaCl/conductivity to measure chamber volume at the freshwater sites which could analyze immediately. Water column (W) rates are calculated based on the sum of water chamber oxygen change at each time step multiplied by incubation time and water depth at each time step. The YOR_BR W rates are questionable - we either need to correct the oxygen concentrations for changes in temperature and water depth or discard the data assuming chamber leakage.
+
+```{r}
+#Plot mean SAV-mass flux.
+
+ggplot(flux_summary_sav, aes(x = name, y = means)) +
+   geom_point() + 
+   geom_hline(yintercept = 0, linetype = "dashed") +
+   geom_errorbar(aes(ymin = means - ses, ymax = means + ses), width = 0.1) +
+  facet_wrap(~site) +
+   labs(x = "", y = expression("Oxygen"~"flux (mmol O"[2]~"g SAV"^-1~"h"^-1*")"),
+        title = expression("Mean oxygen flux per g SAV dry weight")) +
+   theme_light()
+```
+
+Oxygen flux per g SAV biomass (dry weight). To calculate this, we multiplied oxygen change (mg/l) by chamber water volume (l), converted to mg to mmol, and divided by SAV dry weight in each chamber (g). Again, only available right now for the freshwater site because chamber volume is used in this calculation. These rates are whole-system metabolism - we didn't subract out water and sediment rates.

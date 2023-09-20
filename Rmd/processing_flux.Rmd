@@ -1,0 +1,248 @@
+---
+title: "processing_flux"
+output: html_document
+date: "2023-08-23"
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+#Read in DIC and TA data
+ids <- read_csv(here::here("Data/sample_list.csv"))
+
+dic <- read_csv(here::here("Data/dic_2023.csv")) %>%
+  left_join(ids) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  select(-notes)
+
+ta <- read_csv(here::here("Data/ta_2023.csv")) %>%
+  select(-sample) %>%
+  left_join(ids) %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+           select(-notes)
+
+#read in logger data
+load("Data/loggers_processed.RData")
+
+plant_weight <- read_csv("Data/biomass.csv") %>%
+  filter(ag_bg != "sediment") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  group_by(date, id, ag_bg) %>%
+  summarize(plant_weight_g = sum(dry_mass_g)) %>%
+  pivot_wider(values_from = plant_weight_g, names_from = ag_bg)
+
+vols <- read_csv("Data/chamber_volume_calcs.csv") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         vol_l = case_when(is.na(vol_l) ~ mean(vol_l[bag_size == "small"], na.rm = TRUE),
+                           TRUE ~ vol_l)) %>%
+  select(date, id, vol_l)
+
+times_discrete <- read_csv("Data/sample_times.csv") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_"),
+         site = paste(river, site, sep = "_")) %>%
+  select(-c(notes, month, day, river))
+```
+
+
+```{r}
+#Calculate O2 flux rates.
+o2_change <- function(do){
+  delta_o <- rep(NA, length(do)) 
+  for(i in 2:length(do)) {delta_o[i] = do[i] - do[i-1]}
+  delta_o
+}
+
+rate_alt <- logger_join %>%
+  group_by(date, id) %>%
+  filter(abs(datetime - T1) == min(abs(datetime - T1)) | 
+         abs(datetime - T2) == min(abs(datetime - T2))) %>%
+  arrange(date, id, datetime) %>%
+  ungroup() %>%
+  mutate(time = rep(c("T1", "T2"), n()/2),
+         timediff = as.numeric(T2 - T1)) %>%
+  pivot_wider(values_from = do_mg_l, names_from = time, id_cols = c(date, id, timediff)) %>%
+  mutate(rate_mg_l_h_alt = (T2 - T1)/timediff) %>%
+  select(-c(T1, T2, timediff))
+
+
+o2_flux <- logger_join %>%
+  select(-c(T1, T2)) %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  mutate(flux_mg_l = o2_change(do_mg_l),
+        delta_t_h = 0.08333,
+        flux_water_mg_m2 =if_else(str_detect(treatment, "W|AMBIENT"), 
+                                  (flux_mg_l * depth_m * 1000),
+                                  NA)) %>%
+  summarize(time_h = sum(delta_t_h),
+            o2_rate_mg_l_h = sum(flux_mg_l, na.rm = TRUE)/time_h,
+            flux_water_mg_m2_h = sum(flux_water_mg_m2, na.rm = TRUE)/time_h) %>%
+  ungroup() %>%
+  left_join(rate_alt) %>%
+  mutate(ratediff = o2_rate_mg_l_h - rate_mg_l_h_alt,
+         o2_rate_mg_l_h = case_when(abs(ratediff) > 0.5 ~ rate_mg_l_h_alt,
+                                 TRUE ~ o2_rate_mg_l_h)) %>%
+  select(-c(rate_mg_l_h_alt, ratediff)) %>%
+  left_join(plant_weight) %>%
+  left_join(vols) %>%
+  mutate(o2_rate_mmol_l_h = o2_rate_mg_l_h/32,
+         o2_rate_mmol_m2_h = if_else(str_detect(treatment, "W"),
+                             flux_water_mg_m2_h / 32,
+                             o2_rate_mmol_l_h * vol_l / 0.018),
+         o2_rate_mmol_g_sav_h = o2_rate_mmol_l_h * vol_l / ag) %>%
+  select(-c(flux_water_mg_m2_h, time_h)) %>%
+  drop_na(site) %>%
+  drop_na(chamber_id)
+
+
+o2_flux <- logger_join %>%
+  select(-c(T1, T2)) %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  mutate(flux_mg_l = o2_change(do_mg_l),
+        delta_t_h = 0.08333) %>%
+  summarize(time_h = sum(delta_t_h),
+            o2_rate_mg_l_h = sum(flux_mg_l, na.rm = TRUE)/time_h,
+            depth_m = mean(depth_m, na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(rate_alt) %>%
+  mutate(ratediff = o2_rate_mg_l_h - rate_mg_l_h_alt,
+         o2_rate_mg_l_h = case_when(abs(ratediff) > 0.5 ~ rate_mg_l_h_alt,
+                                 TRUE ~ o2_rate_mg_l_h)) %>%
+  select(-c(rate_mg_l_h_alt, ratediff)) %>%
+  left_join(plant_weight) %>%
+  left_join(vols) %>%
+  mutate(o2_rate_mmol_l_h = o2_rate_mg_l_h / 32,
+         o2_rate_mmol_m2_h = if_else(str_detect(treatment, "W|AMBIENT"),
+                             o2_rate_mg_l_h * 1000 * depth_m  / 32,
+                             o2_rate_mmol_l_h * vol_l / 0.018),
+         o2_rate_mmol_g_sav_h = o2_rate_mmol_l_h * vol_l / ag) %>%
+  select(-c(time_h)) %>%
+  drop_na(site) %>%
+  drop_na(chamber_id)
+```
+
+
+```{r}
+#Plot fluxes (mg/l/h) to check
+flux_list <- o2_flux %>%
+  group_by(date) %>%
+  group_split()
+
+fluxplot1 <- function(x){
+ggplot(x, aes(x = chamber_id, y = o2_rate_mg_l_h, fill = treatment)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression("O"[2]~"flux (mg l"^-1~"h"^-1*")"),
+       title = paste("Oxygen fluxes", x$date[1]),
+       subtitle = "(not normalized to biomass or chamber volume)") +
+  theme_light()
+}
+
+map(flux_list, fluxplot1)
+```
+
+```{r}
+#calculate change in pH
+delta_ph <- logger_join %>%
+  group_by(date, id) %>%
+  filter(abs(datetime - T1) == min(abs(datetime - T1)) | 
+         abs(datetime - T2) == min(abs(datetime - T2))) %>%
+  arrange(date, id, datetime) %>%
+  ungroup() %>%
+  mutate(time = rep(c("T1", "T2"), n()/2),
+         timediff = as.numeric(T2 - T1)) %>%
+  pivot_wider(values_from = ph, names_from = time, id_cols = c(date, id, timediff)) %>%
+  mutate(ph_change = T2 - T1) %>%
+  select(-c(T1, T2, timediff))
+
+ph_summary <- logger_join %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  summarize(max_ph = max(ph, na.rm = TRUE),
+            min_ph = min(ph, na.rm = TRUE), 
+            mean_ph = mean(ph, na.rm = TRUE)) %>%
+  left_join(delta_ph) %>%
+  ungroup()
+```
+
+
+```{r}
+#Plot delta pH
+ph_list <- ph_summary %>%
+  group_by(date) %>%
+  group_split()
+
+deltaphplot <- function(x){
+  ggplot(x, aes(x = chamber_id, y = ph_change, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"pH"),
+       title = expression("pH change (pH"[T2]~"- pH"[T1]*")"),
+       subtitle = x$date[1]) +
+    ylim(c(-0.5, 2)) +
+  theme_light()
+}
+
+map(ph_list, deltaphplot)
+```
+
+
+```{r}
+#Calculate DIC change
+dic_flux <- dic %>%
+  select(date, id, treatment, replicate, chamber_id, dic_mmol, sample) %>%
+  pivot_wider(names_from = sample, values_from = dic_mmol) %>%
+  mutate(dic_change_mmol_l = T2 - T1,
+         dic_t1 = T1) %>%
+  select(-T1, -T2) %>%
+  left_join(times_discrete) %>%
+  left_join(vols) %>%
+  left_join(plant_weight) %>%
+  mutate(time_change = as.numeric(T2 - T1) / 3600,
+         dic_rate_mmol_l_h = dic_change_mmol_l / time_change,
+         dic_rate_mmol_m2_h = dic_rate_mmol_l_h * vol_l / 0.018,
+         dic_rate_mmol_g_sav_h = dic_rate_mmol_l_h * vol_l / ag) %>%
+  select(-c(T1, T2))
+```
+
+
+```{r}
+#Calculate TA change
+ta_flux <- ta %>%
+  select(date, id, treatment, replicate, chamber_id, ta_umol_l, sample) %>%
+  pivot_wider(names_from = sample, values_from = ta_umol_l) %>%
+  mutate(ta_change_umol_l = T2 - T1,
+         ta_t1 = T1) %>%
+  select(-T1, -T2) %>%
+  left_join(times_discrete) %>%
+  left_join(vols) %>%
+  left_join(plant_weight) %>%
+  mutate(time_change = as.numeric(T2 - T1) / 3600,
+         ta_rate_umol_l_h = ta_change_umol_l / as.numeric(time_change),
+         ta_rate_mmol_m2_h = ta_rate_umol_l_h * vol_l / 0.018 / 1000,
+         ta_rate_mmol_g_sav_h = ta_rate_umol_l_h * vol_l / ag / 1000) %>%
+  select(-c(T1, T2))
+```
+
+Join flux data
+```{r}
+flux_data <- o2_flux %>%
+  full_join(ph_summary) %>%
+  full_join(dic_flux) %>%
+  full_join(ta_flux) %>%
+  mutate(month = month(date),
+    season = case_when(month %in% 5:6 ~ "spring",
+                            month == 8 ~ "summer",
+                            month == 10 ~ "fall")) %>%
+  select(date, year, season, id, site, chamber_id, treatment, time_change, dic_t1, dic_change_mmol_l, dic_rate_mmol_l_h, dic_rate_mmol_m2_h, dic_rate_mmol_g_sav_h, ta_t1, ta_change_umol_l, ta_rate_umol_l_h, ta_rate_mmol_m2_h, ta_rate_mmol_g_sav_h, o2_rate_mg_l_h, o2_rate_mmol_l_h, o2_rate_mmol_m2_h, o2_rate_mmol_g_sav_h, ph_change, max_ph, min_ph, mean_ph, ag, bg)
+```
+
+Save data
+```{r}
+save(flux_data, file = "Data/flux_data.RData")
+```
+

@@ -10,6 +10,7 @@ library(lubridate)
 library(hms)
 library(here)
 library(survival)
+library(patchwork)
 
 knitr::opts_chunk$set(
   echo = FALSE,
@@ -18,6 +19,22 @@ knitr::opts_chunk$set(
 )
 ```
 
+```{r}
+#Read in DIC and TA data
+ids <- read_csv(here::here("Data/sample-list.csv"))
+
+dic <- read_csv(here::here("Data/dic_2023.csv")) %>%
+  left_join(ids) %>%
+  mutate(site = paste(river, site, sep = "_"),
+         id = paste(site, chamber_id, sep = "_"))
+
+
+ta <- read_csv(here::here("Data/ta_2023.csv")) %>%
+  select(-sample) %>%
+  left_join(ids) %>%
+  mutate(site = paste(river, site, sep = "_"),
+         id = paste(site, chamber_id, sep = "_"))
+```
 
 ```{r}
 #Read in oxygen logger data. Times are in EST.
@@ -36,7 +53,6 @@ do <- paste(here::here("Data/loggers/"), do_files, sep = "") %>%
          datetime = round_date(datetime_est, "5 mins")) %>%
   select(-datetime_est)
 ```
-
 
 ```{r}
 #Read in pH logger data and convert to EST.
@@ -132,6 +148,18 @@ vols <- read_csv(here::here("Data/chamber_volume_calcs.csv")) %>%
   select(date, id, vol_l)
 ```
 
+```{r}
+#get pH at T1 and T2 for calcium samples
+
+ph %>% 
+  select(date, datetime, ph, id) %>%
+  left_join(times) %>%
+  filter(date > ymd("2023-07-31")) %>%
+  group_by(date, id, site, chamber_id, treatment) %>% 
+  filter(abs(difftime(datetime,T2)) == min(abs(difftime(datetime,T2)))) %>%
+  filter(chamber_id %in% c("A", "B","D", "E", "G", "J")) %>%
+  print(n = 40)
+```
 
 ```{r}
 #Join logger data for time series plots.
@@ -261,12 +289,12 @@ fluxes <- do %>%
             flux_water_mg_m2_h = sum(flux_water_mg_m2, na.rm = TRUE)/time_h) %>%
   full_join(sav_weight) %>%
   full_join(vols) %>%
-  mutate(mmol_h = (rate_mg_l_h/32) * vol_l,
-         mmol_m2_h = if_else(str_detect(treatment, "W"),
+  mutate(rate_mmol_l_h = rate_mg_l_h/32,
+         rate_mmol_m2_h = if_else(str_detect(treatment, "W"),
                              flux_water_mg_m2_h / 32,
-                             mmol_h / 0.018),
-         mmol_g_sav_h = mmol_h / sav_wt) %>%
-  select(-c(flux_water_mg_m2_h, mmol_h)) %>%
+                             rate_mmol_l_h * vol_l / 0.018),
+         rate_mmol_g_sav_h = rate_mmol_l_h * vol_l / sav_wt) %>%
+  select(-c(flux_water_mg_m2_h)) %>%
   drop_na(site)
 ```
 
@@ -314,6 +342,85 @@ ggplot(delta_ph, aes(x = chamber_id, y = ph_change, fill = treatment)) +
        subtitle = "during incubation (2-4 h)") +
   theme_light() 
 ```
+
+
+```{r}
+#Calculate DIC change
+dic_flux <- dic %>%
+  select(id, site, treatment, replicate, chamber_id, dic_mmol, sample) %>%
+  pivot_wider(names_from = sample, values_from = dic_mmol) %>%
+  mutate(dic_change_mmol_l = T2 - T1) %>%
+  select(-T1, -T2) %>%
+  full_join(times) %>%
+  full_join(vols) %>%
+  mutate(time_change = T2 - T1,
+         flux_mmol_l_h = dic_change_mmol_l / as.numeric(time_change),
+         flux_mmol_m2_h = flux_mmol_l_h * vol_l) %>%
+  select(-T1, -T2) %>%
+  filter(site %in% c("YOR_BR", "YOR_FW"))
+```
+
+
+```{r}
+#Calculate TA change
+ta_flux <- ta %>%
+  select(id, site, treatment, replicate, chamber_id, ta_umol_l, sample) %>%
+  pivot_wider(names_from = sample, values_from = ta_umol_l) %>%
+  mutate(ta_change_umol_l = T2 - T1) %>%
+  select(-T1, -T2) %>%
+  full_join(times) %>%
+  full_join(vols) %>%
+  mutate(time_change = T2 - T1,
+         flux_umol_l_h = ta_change_umol_l / as.numeric(time_change)) %>%
+#         flux_umol_m2_h = flux_umol_l_h * vol_l) %>%
+  select(-T1, -T2) %>%
+  filter(site %in% c("YOR_BR", "YOR_FW"))
+```
+
+```{r}
+#plot DIC TA and DO
+dicplot <- ggplot(dic_flux, aes(x = chamber_id, y = flux_mmol_l_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  lims(y = c(-0.068, 0.026)) +
+  labs(x = "Chamber ID", y = expression(Delta~"DIC (mmol l"^-1~"h"^-1*")"),
+       title = "DIC flux") +
+  theme_light()
+
+taplot <- ggplot(ta_flux, aes(x = chamber_id, y = flux_umol_l_h, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"TA (umol l"^-1~"h"^-1*")"),
+       title = "TA flux") +
+  theme_light()
+
+doplot <- fluxes %>%
+  filter(site %in% c("YOR_BR", "YOR_FW"),
+         chamber_id != "Z") %>%
+  ggplot(aes(x = chamber_id, y = rate_mmol_l_h, fill = treatment)) +
+  geom_bar(stat="identity") +
+  lims(y = c(-0.068, 0.026)) +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"O"[2]~"(mmol l"^-1~"h"^-1*")"),
+       title = "Oxygen flux") +
+  theme_light()
+
+phplot <- delta_ph %>%
+  filter(site %in% c("YOR_BR", "YOR_FW"),
+         chamber_id != "Z") %>%
+  ggplot(aes(x = chamber_id, y = ph_change, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression(Delta~"pH"),
+       title = expression("pH change")) +
+  theme_light() 
+
+taplot + dicplot + doplot +  phplot + plot_layout(guides = 'collect') + plot_annotation(caption = "D = dark, L = light; missing values = samples not yet analyzed or sonde programming error.\nFluxes have not been normalized to chamber volume. DIC data are provisional.")
+
+ggsave("sav_ta_dic_do_ph.png", width = 10, height = 6, units = "in", dpi = 300)
+```
+
+
 
 Missing pH change for YOR_FW due to human error.
 

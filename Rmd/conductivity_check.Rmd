@@ -1,0 +1,45 @@
+---
+title: "conductivity check"
+output: html_document
+date: "2023-08-25"
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+#Read in HOBO logger data 
+cond_files <- list.files(here::here("Data/loggers"), pattern = "COND")
+cond_names <-substr(cond_files, 12, 17)
+
+cond <- paste(here::here("Data/loggers/"), cond_files, sep = "") %>%
+  set_names(cond_names) %>%
+  map_dfr(read_csv, .id = "id") %>%
+  mutate(datetime = mdy_hm(datetime),
+         date = date(datetime),
+         year = year(date),
+         month = month(date),
+         season = case_when(month %in% 5:6 ~ "spring",
+                            month %in% 7:8 ~ "summer",
+                            month %in% 9:10 ~ "fall"),
+         site = substr(id, 1, 6)) %>%
+  select(year, season, date, datetime, site, cond_us_cm, spec_cond_us_cm, salinity_ppt)
+
+cond_list <- cond %>%
+  group_split(season, year)
+```
+
+```{r}
+condplot <- function(data) {
+  ggplot(data, aes(x = datetime, y = salinity_ppt)) +
+  geom_line() +
+  labs(x = "", y = "Salinity") +
+    facet_wrap(~site, scales = "free_x") +
+  theme_light()
+}
+
+map(cond_list, condplot)
+```
+
+No significant change in conductivity after tracer added.
