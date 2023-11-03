@@ -1,0 +1,45 @@
+---
+title: "analysis"
+output: html_document
+date: "2023-09-21"
+---
+
+Calcs
+TA changes in estuaries are related to changes in calcium ion, nitrate, ammonium, and sulfate: DTA = 2DCa2+ + DNH4+ – DNO3– – 2DSO42–
+You find an oxygen increase of about 20 umol/l/h and a TA decrease of maybe 8 umol/l/h. I cannot quickly find typical O2:C ratios for SAV, so let's use a typical value of 1.5 for marine plankton. That means the DIC decline due to photosynthesis would be 13 umol/l/h. The associated DIC decline from calcification would be 8/2 = 4 umol/l/h. So I would expect a total DIC decline of 17 umol/l/h, which is about a third of what's observed.
+
+Photosynthesis consumes ta
+Calcite precipitation/calcification consumes ta
+Aerobic oxidation of reduced NH4, Mn2+, Fe2+, sulfide consume ta
+
+Aerobic respiration produces ta
+Anaerobic respiration produces ta (denitrification, DNRA, sulfate reduction)
+Calcite dissolution produces ta
+```{r}
+library(tidyverse)
+
+load(here("Data/flux_data.RData"))
+```
+
+
+```{r}
+compare <- flux_data %>% 
+  mutate(no23_ta_mmol_m2_h = no23_rate_umol_m2_h / 1000,
+         nh3_ta_mmol_m2_h = nh3_rate_umol_m2_h / 1000, 
+         po4_ta_mmol_m2_h = po4_rate_umol_m2_h / 1000,
+         nuts_ta_mmol_m2_h = nh3_ta_mmol_m2_h -no23_ta_mmol_m2_h - po4_ta_mmol_m2_h) %>%
+  drop_na(nuts_ta_mmol_m2_h) %>%
+  select(date, site, id, chamber_id, treatment, nuts_ta_mmol_m2_h, ta_rate_mmol_m2_h) %>%
+  rename(`Flux from NO23, NH4, and PO4` = nuts_ta_mmol_m2_h,
+         `Measured flux` = ta_rate_mmol_m2_h) %>%
+  pivot_longer(6:7)
+```
+
+```{r}
+ggplot(compare, aes(x = chamber_id, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~site) +
+  labs(x = "Chamber ID", y = expression("TA flux (mmol m"^-2~"h"^-1*")")) +
+  theme_light()
+```
+

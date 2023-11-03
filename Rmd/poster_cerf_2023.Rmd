@@ -1,0 +1,560 @@
+---
+title: "poster_cerf_2023"
+output: html_document
+date: "2023-10-31"
+---
+
+Read in packages
+```{r, include = FALSE}
+library(tidyverse)
+library(khroma)
+library(ggpubr)
+library(ggsci)
+library(here)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+Load data
+```{r}
+load(here("Data/flux_data.RData"))
+
+licor <- read_csv(here("Data/par.csv"))
+
+animals <- read_csv(here("Data/animals_epiphytes.csv")) %>%
+  mutate(site = paste(river, site, sep = "_"),
+         id = paste(site, chamber_id, sep = "_")) %>%
+  group_by(date, id, species_id) %>%
+  summarize(dry_mass_g = sum(dry_mass_g, na.rm = TRUE),
+            organic_g = sum(organic_g, na.rm = TRUE), 
+            inorgainc_g = sum(inorganic_g, na.rm = TRUE))
+
+sediment <- read_csv(here("Data/biomass.csv")) %>%
+  filter(ag_bg == "sediment") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_")) %>%
+  group_by(date, id, species) %>%
+  summarize(dry_mass = sum(dry_mass_g, na.rm = TRUE),
+            dry_mass_aerial = sum(biomass_g_m2, na.rm = TRUE))
+
+biomass <- read_csv(here("Data/biomass.csv")) %>%
+  filter(ag_bg != "sediment") %>%
+  mutate(id = paste(river, site, chamber_id, sep = "_")) %>%
+  group_by(date, id, site, chamber_id, species, ag_bg) %>%
+  summarize(dry_mass_g = sum(dry_mass_g, na.rm = TRUE),
+            biomass_g_m2 = sum(biomass_g_m2, na.rm = TRUE)) %>%
+  mutate(season = case_when(month(date) %in% 5:6 ~ "spring",
+                            month(date) %in% 7:8 ~ "summer",
+                            month(date) %in% 9:10 ~ "fall"),
+         year = year(date)) %>%
+  ungroup()
+```
+
+SAV biomass plot
+```{r}
+#plot biomass
+biomass_plot <- biomass %>%
+  filter(season == "spring") %>%
+  complete(date, id, species, year, season, ag_bg, site, chamber_id, 
+           fill = list(dry_mass_g = 0, biomass_g_m2 = 0), explicit = TRUE) %>%
+  mutate(site = substr(id, 1, 6)) %>%
+  ungroup() %>%
+  mutate(ag_bg = case_when(ag_bg == "ag" ~ "above ground",
+                           ag_bg == "bg" ~ "below ground"),
+         Species = case_when(species == "cd" ~ "Ceratophyllem demersum",
+                             species == "hv" ~ "Hydrilla verticillata",
+                             species == "lw" ~ "Lyngbya spp.",
+                             species == "ng" ~ "Najas guadeloupensis",
+                             species == "red_algae" ~ "red algae",
+                             species == "cladophora" ~ "green algae",
+                             species == "rm" ~ "Ruppia maritima",
+                             species == "zm" ~ "Zostera marina",
+                             species == "unknown" ~ "mixed species roots",
+                             species == "va" ~ "Vallisneria americana",
+                             species == "ms" ~ "Myriophyllem spicatum",
+                             species == "pper" ~ "Potamogeton perfoliatus",
+                             species == "ppus" ~ "Potamogeton pusilus",
+                             species == "hd" ~ "Heteranthera dubia",
+                             species == "nm" ~ "Najas minor"),
+         site = case_when(site == "POT_BR" ~ "Potomac brackish",
+                          site == "YOR_BR" ~ "York brackish",
+                          site == "YOR_FW" ~ "York fresh")) %>%
+    filter(ag_bg == "above ground")
+
+biomass_plot %>%
+  filter(species != "mixed species roots") %>%
+ggplot(aes(x = chamber_id, y = biomass_g_m2, fill = Species)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ site) +
+  labs(x = "Chamber ID", y = expression("SAV above ground biomass (g m"^-2*")")) +
+  scale_fill_viridis_d(end = 0.95) +
+  theme_light()
+```
+
+
+```{r}
+#Plot epi/animal raw data
+animals_plot <- animals %>%
+  filter(species_id != "sav") %>%
+  pivot_longer(4:6, names_to = "param", values_to = "value") %>%
+  group_by(date, id, species_id, param) %>%
+  summarize(value = sum(value)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  mutate(calcifier = case_when(species_id %in% c("clam", "crab", "epi", "insect", "snail") ~ "yes",
+                               TRUE ~ "no")) %>%
+  select(-dry_mass_g) %>%
+  rename(tissue = organic_g, shell = inorgainc_g) %>%
+  pivot_longer(4:5, names_to = "param", values_to = "value") %>%
+  complete(date, id, species_id, param, calcifier, 
+           fill = list(value = 0), explicit = TRUE) %>%
+  ungroup() %>%
+  mutate(season = case_when(month(date) %in% 5:6 ~ "spring",
+                            month(date) %in% 7:8 ~ "summer",
+                            month(date) %in% 9:10 ~"fall"),
+         chamber_id = substr(id, 8, 8),
+         site = substr(id, 1, 6))
+
+animals_plot %>%
+  filter(calcifier == "yes",
+         season == "spring") %>%
+  drop_na(species_id) %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  ggplot(aes(x = chamber_id, y = shell, fill = species_id)) +
+    geom_bar(stat = "identity") +
+    labs(x = "Chamber ID", y = "Calcifier shell (g)") +
+    facet_grid(season ~ site) +
+  theme_light() +
+    scale_fill_npg()
+
+animals_plot %>%
+  filter(calcifier == "yes",
+         season == "spring") %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  ggplot(aes(x = chamber_id, y = tissue, fill = species_id)) +
+    geom_bar(stat = "identity") +
+    labs(x = "Chamber ID", y = "Calcifier tissue (g)") +
+    facet_grid(season ~ site) +
+  theme_light() +
+    scale_fill_npg()
+
+animals_plot %>%
+  filter(calcifier == "no",
+         season == "spring") %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  ggplot(aes(x = chamber_id, y = tissue, fill = species_id)) +
+    geom_bar(stat = "identity") +
+    labs(x = "Chamber ID", y = "Worms (g)") +
+    facet_grid(season ~ site) +
+  theme_light() +
+    scale_fill_npg()
+```
+
+
+```{r}
+#Join flux and calcifiers dataframes
+calcifier_join <- animals %>%
+  filter(species_id != "sav") %>%
+  pivot_longer(4:6, names_to = "param", values_to = "value") %>%
+  mutate(calcifier = case_when(species_id %in% c("clam", "crab", "epi", "insect", "snail") ~ "yes",
+                               TRUE ~ "no")) %>%
+  group_by(date, id, calcifier, param) %>%
+  summarize(value = sum(value)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  filter(calcifier == "yes") %>%
+  select(-calcifier, -dry_mass_g) %>%
+  rename(calcifier_tissue_g = organic_g, calcifier_shell_g = inorgainc_g)
+
+worm_join <- animals %>%
+  filter(species_id != "sav") %>%
+  pivot_longer(4:6, names_to = "param", values_to = "value") %>%
+  mutate(calcifier = case_when(species_id %in% c("clam", "crab", "epi", "insect", "snail") ~ "yes",
+                               TRUE ~ "no")) %>%
+  group_by(date, id, calcifier, param) %>%
+  summarize(value = sum(value)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = param, values_from = value) %>%
+  filter(calcifier == "no") %>%
+  select(-calcifier, -dry_mass_g, -inorgainc_g) %>%
+  rename(worm_tissue_g = organic_g)
+
+epi <- animals %>%
+  filter(species_id == "epi") %>%
+  select(date, id, dry_mass_g) %>%
+  rename(epi_g = dry_mass_g)
+
+flux_data <- flux_data %>%
+  left_join(calcifier_join) %>%
+  left_join(worm_join) %>%
+  left_join(epi) %>%
+  mutate(Site = case_when(site == "POT_BR" ~ "Potomac\nbrackish",
+                          site == "YOR_BR" ~ "York\nbrackish",
+                          site == "YOR_FW" ~ "York\nfresh")) %>%
+  mutate(sav = treatment) %>%
+  separate(sav, into = c("sav", "light_dark")) %>%
+  mutate(light_dark = case_when(light_dark == "D" ~ "dark",
+                                light_dark == "L" ~ "light"),
+         sav = case_when(sav == "SAV" ~ "vegetated",
+                         sav == "SED" ~ "bare")) %>%
+  drop_na(Site)
+```
+
+AVERAGES
+```{r}
+se <- function(x) sd(x, na.rm = TRUE) / sqrt(length(x))
+
+avgs <- flux_data %>%
+  filter(treatment %in% c("SAV-D", "SAV-L", "SED-D", "SED-L"),
+         season == "spring") %>%
+  mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+  group_by(date, Site, treatment) %>%
+  summarize(dic_mean = mean(dic_rate_mmol_m2_h, na.rm = TRUE),
+            dic_se = se(dic_rate_mmol_m2_h),
+            ta_mean = mean(ta_rate_mmol_m2_h, na.rm = TRUE),
+            ta_se = se(ta_rate_mmol_m2_h),
+            o2_rate_mean = mean(o2_rate_mmol_m2_h, na.rm = TRUE),
+            o2_se = se(o2_rate_mmol_m2_h)) %>%
+  separate(treatment, into = c("sav", "light_dark")) %>%
+  mutate(sav = case_when(sav == "SED" ~ "bare",
+                         TRUE ~ "vegetated"),
+         light_dark = case_when(light_dark == "D" ~ "dark",
+                                light_dark == "L" ~ "light"))
+
+p1 <- ggplot(avgs, aes(x = light_dark, y = dic_mean, fill = sav)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = dic_mean - dic_se, ymax = dic_mean + dic_se), width = 0.2,
+                position = position_dodge(0.9)) +
+  geom_hline(yintercept = 0, lty = "dashed", color = "gray") +
+  labs(x = "", y = expression("DIC flux (mmol m"^-2~"h"^-1*")")) +
+  facet_wrap(~Site) +
+    scale_fill_npg() +
+  theme_light() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(avgs, aes(x = light_dark, y = ta_mean, fill = sav)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = ta_mean - ta_se, ymax = ta_mean + ta_se), width = 0.2,
+                position = position_dodge(0.9)) +
+  geom_hline(yintercept = 0, lty = "dashed", color = "gray") +
+  labs(x = "", y = expression("TA flux (mmol m"^-2~"h"^-1*")")) +
+  facet_wrap(~Site) +
+    scale_fill_npg() +
+  theme_light() +
+  theme(legend.position = "none")
+
+p3 <- ggplot(avgs, aes(x = light_dark, y = o2_rate_mean, fill = sav)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = o2_rate_mean - o2_se, ymax = o2_rate_mean + o2_se), width = 0.2, 
+                position = position_dodge(0.9)) +
+  geom_hline(yintercept = 0, lty = "dashed", color = "gray") +
+  labs(x = "", y = expression("O"[2]~"flux (mmol m"^-2~"h"^-1*")"),
+       fill = "") +
+  facet_wrap(~Site) +
+    scale_fill_npg() +
+  theme_light() +
+  theme(legend.position = "bottom")
+
+p2 + p1 + p3 +plot_layout(nrow = 3)
+```
+
+*Use this plot*
+Boxplot of TA at each site
+```{r}
+flux_data %>%
+  drop_na(sav) %>%
+  filter(season == "spring") %>%
+  mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+ggplot(aes(x = Site, y = ta_rate_mmol_m2_h, fill = sav)) +
+  geom_hline(yintercept = 0, color = "darkgray", lty = "dashed") +
+  geom_boxplot(alpha = 0.8) +
+  geom_jitter(alpha = 0.5, position = position_jitterdodge(jitter.width = 0.15)) +
+  facet_wrap(~light_dark) +
+  labs(x = "", y = expression("TA flux (mmol m"^-2~"h"^-1*")"),
+       fill = "", title = expression("Light and dark TA flux in bare and vegetated sediment")) +
+  scale_fill_npg() +
+  theme_light() +
+  theme(text = element_text(size=20),
+        legend.position = "bottom")
+
+ggsave("Figures/ta_flux.png", width = 12, height = 8, units = "in", dpi = 300)
+```
+
+Boxplot of spring DIC, O2, and alkalinity fluxes. SAV beds are generally an alkalinity sink, although there is variability. In the dark, SAV beds are consume less TA than unvegetated sediment, and sometimes they are a source. In the light, SAV beds are less of a TA source/more of a sink than bare sediment.
+```{r}
+plotdat <- flux_data %>% 
+  filter(treatment %in% c("SAV-D", "SAV-L", "SED-D", "SED-L"),
+         season == "spring") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+  select(date, id, Site, treatment, light_dark, sav, chamber_id, season, o2_rate_mmol_m2_h, dic_rate_mmol_m2_h, ta_rate_mmol_m2_h) %>%
+  rename(O2 = o2_rate_mmol_m2_h, DIC = dic_rate_mmol_m2_h, TA = ta_rate_mmol_m2_h) %>%
+  pivot_longer(9:11)
+
+ggplot(plotdat, aes(x = name, y = value, fill = sav)) +
+  geom_hline(yintercept = 0, color = "darkgray", lty = "dashed") +
+  geom_boxplot(alpha = 0.8) +
+  geom_jitter(alpha = 0.5, position = position_jitterdodge(jitter.width = 0.15)) +
+  facet_wrap(~light_dark) +
+  labs(x = "", y = expression("Flux (mmol m"^-2~"h"^-1*")"),
+       fill = "", title = expression("Light and dark DIC, O"[2]*", and TA in bare and vegetated sediment")) +
+  scale_fill_npg() +
+  theme_light() 
+```
+
+Overall fluxes across sites
+```{r}
+ggplot(plotdat, aes(x = Site, y = value)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  facet_wrap(~name) +
+  labs(x = "", y = expression("Flux (mmol m"^-2~"h"^-1*")"),
+       title = expression("DIC, O"[2]*", and TA differences across sites")) +
+    theme_light()
+```
+
+Linear model to test for bare vs vegetated differences in TA flux across sites. TA flux was greater at Potomac - brackish compared to both York sites. Potomac was more of a TA source whereas both York sites were more of a TA sink.
+```{r}
+statdat <- flux_data %>% 
+  filter(season == "spring") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h))
+mod <- aov(ta_rate_mmol_m2_h ~ site, data = statdat)
+summary(mod)
+TukeyHSD(mod)
+```
+
+Linear model to test for treatment differences in TA flux for all sites. No differences due to variability across sites. 
+```{r}
+statdat <- flux_data %>% 
+  filter(season == "spring",
+         treatment %in% c("SAV-L", "SAV-D", "SED-L", "SED-D")) %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h))
+
+mod <- aov(ta_rate_mmol_m2_h ~ sav * light_dark, data = statdat)
+summary(mod)
+TukeyHSD(mod)
+
+ggplot(statdat, aes(x = light_dark, y = ta_rate_mmol_m2_h, fill = sav)) +
+  geom_boxplot() +
+  labs(x = "", y = "Flux")
+```
+
+AOV to test for treatment effects within sites. 
+York fresh: Less TA consumption in vegetated vs bare in the dark.
+York brackish: More TA consumption in vegetated vs bare in the light.
+Potomac brackish: no significant differences.
+```{r}
+#plot
+flux_data %>% 
+  filter(season == "spring",
+         treatment %in% c("SAV-L", "SAV-D", "SED-L", "SED-D")) %>%
+ggplot(aes(x = light_dark, y = ta_rate_mmol_m2_h, fill = sav)) +
+  geom_boxplot() +
+  labs(x = "", y = "Flux") +
+  facet_wrap(~Site)
+
+#--------------------
+
+#york fresh
+
+statdat <- flux_data %>% 
+  filter(season == "spring",
+         site == "YOR_FW",
+         treatment %in% c("SAV-L", "SAV-D", "SED-L", "SED-D")) %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+  select(date, id, site, treatment, sav, light_dark, sav, chamber_id, ta_rate_mmol_m2_h) %>%
+  drop_na(sav)
+
+mod <- aov(ta_rate_mmol_m2_h ~ sav*light_dark, data = statdat)
+summary(mod)
+TukeyHSD(mod)
+
+#--------------------
+
+#York brackish
+
+statdat <- flux_data %>% 
+  filter(season == "spring",
+         site == "YOR_BR",
+         treatment %in% c("SAV-L", "SAV-D", "SED-L", "SED-D")) %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+  select(date, id, site, treatment, sav, light_dark, sav, chamber_id, ta_rate_mmol_m2_h) %>%
+  drop_na(sav)
+
+mod <- aov(ta_rate_mmol_m2_h ~ sav*light_dark, data = statdat)
+summary(mod)
+TukeyHSD(mod)
+
+#--------------------
+
+#Potomac brackish
+
+statdat <- flux_data %>% 
+  filter(season == "spring",
+         site == "POT_BR",
+         treatment %in% c("SAV-L", "SAV-D", "SED-L", "SED-D")) %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+  select(date, id, site, treatment, sav, light_dark, sav, chamber_id, ta_rate_mmol_m2_h) %>%
+  drop_na(sav)
+
+mod <- aov(ta_rate_mmol_m2_h ~ sav*light_dark, data = statdat)
+summary(mod)
+TukeyHSD(mod)
+```
+
+DIC/O2 ratio  represents reoxidation efficiency of NH4+, iron, manganese, and sulfur. Samples with high DIC/O2 ratio indicate there's not enough O2 to efficiently reoxidize the reduced products of anaerobic metabolism. Higher ratios are indicative of anaerobic respiration as dominant carbon mineralization pathway. At both brackish sites, 
+```{r}
+flux_data %>% 
+  filter(treatment != "AMBIENT",
+                     sav %in% c("bare", "vegetated")) %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1.5 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h),
+           o2 = o2_rate_mmol_m2_h * -1,
+           dic_o2 = dic_rate_mmol_m2_h / o2) %>%
+ggplot(aes(x = light_dark, y = dic_o2, fill = sav)) +
+  geom_boxplot() +
+  labs(x = "", y = expression("DIC:O"[2]), fill = "") +
+  geom_hline(yintercept = 0, color = "gray", linetype = "dashed") +
+  facet_wrap(~Site) +
+  scale_fill_npg() +
+  theme_light() 
+```
+
+*Use this plot*
+Effect of SAV biomass on alkalinity flux. TA consumption increases as SAV biomass increases.
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+ggplot(aes(x = ag, y = ta_rate_mmol_m2_h)) +
+  geom_smooth(method = "lm", se = FALSE, color = "gray") +
+  geom_point(aes(color = Site), size = 3) +
+  labs(x = expression("SAV biomass (g m"^-2*")"), 
+       y = expression("TA flux (mmol m"^-2~"h"^-1*")"),
+       color = "",
+       title = "Biomass effect on TA") +
+  lims(y = c(-2.5, 0.8)) +
+  stat_regline_equation(aes(label =  paste(..eq.label..)), label.x = 2, label.y = 0.7) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), 
+           label.x = 2, label.y = 0.55) +
+  scale_color_npg() +
+  theme_light() +
+  theme(legend.position="bottom", legend.box="vertical", legend.margin=margin(), 
+        text = element_text(size=20)) 
+
+ggsave("Figures/biomass_ta.png", width = 5, height = 5.5, units = "in", dpi = 300)
+```
+
+*use this plot*
+TA consumption increases as oxygen production (light) and consumption (dark) increase.
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h),
+           season == "spring") %>%
+ggplot(aes(x = o2_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color = light_dark)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = expression("O"[2]~"flux (mmol m"^-2~"h"^-1*")"), 
+       y = expression("TA flux (mmol m"^-2~"h"^-1*")"), 
+       color = "",
+       title = "Oxygen flux effect on TA") +
+  geom_hline(yintercept = 0, color = "gray", linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "dashed") +
+  scale_color_npg() +
+  lims(x = c(-5, 6)) +
+  stat_regline_equation(aes(label =  paste(..eq.label..)), label.y = c(-3.5, -4)) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.y = c(-3.65, -4.15)) +
+  theme_light() +
+  theme(legend.position = "bottom", 
+        text = element_text(size=20))
+
+ggsave("Figures/o2_ta.png", width = 5, height = 5.5, units = "in", dpi = 300)
+```
+
+As TA at the beginning of the incubation increases, alkalinity slightly consumption increases (Potomac brackish and York fresh)
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+ggplot(aes(x = ta_t1, y = ta_rate_mmol_m2_h, color = site)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+ # stat_regline_equation() +
+  stat_cor() +
+  theme_light() 
+```
+
+Nitrate, nitrite, and phosphate flux - ammonium flux (because NO23 and PO4 increase alkalinity whereas NH4 decreases alkalinity)
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+ggplot(aes(x = (po4_rate_umol_m2_h + no23_rate_umol_m2_h - nh3_rate_umol_m2_h)/1000, y = ta_rate_mmol_m2_h, color = site)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+ # stat_regline_equation() +
+  stat_cor() +
+  labs(x = expression("NO"[2+3]^"-"~"+ PO"[4]^"3-"~"- NH"[4]^"+"~"Flux (mmol m"^-2~"h"^-1*")"),
+       y = expression("TA flux (mmol m"^-2~"h"^-1*")"))+
+  theme_light() 
+```
+
+TA:DIC ratio
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h),
+           season == "spring") %>%
+ggplot(aes(x = dic_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color = light_dark)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = expression("DIC flux (mmol m"^-2~"h"^-1*")"), 
+       y = expression("TA flux (mmol m"^-2~"h"^-1*")"), 
+       color = "",
+       title = "Oxygen flux effect on TA") +
+  geom_hline(yintercept = 0, color = "gray", linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "dashed") +
+  scale_color_npg() +
+  facet_wrap(~Site) +
+  geom_abline(slope = c(-0.2, 1, 0.8, 2, 0.1, 4.4, 8), color = "gray") +
+  stat_regline_equation(aes(label =  paste(..eq.label..)), label.y = c(-3.5, -4)) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.y = c(-3.65, -4.15)) +
+  theme_light() +
+  theme(legend.position = "bottom", 
+        text = element_text(size=20))
+```
+
+```{r}
+flux_data %>%
+  drop_na(light_dark) %>%
+  filter(treatment %in% c("SAV-D", "SAV-L", "SED-D", "SED-L")) %>%
+  mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+ggplot(aes(x = dic_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color =sav)) +
+  geom_point(aes(shape = light_dark))+ 
+  facet_wrap(~site) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_segment(aes(x = -1, y = 0.5, xend = -1.25, yend = -3), color = "#9c9c9c") +
+  geom_text(aes(x = -1.25, y = -3), label = "calc", color = "gray")
+```
+

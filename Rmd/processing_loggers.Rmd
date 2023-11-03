@@ -182,7 +182,7 @@ map(logger_list, tsplottemp)
 
 ```{r}
 ggplot(logger_join, aes(x = datetime, y = depth_m)) +
-  geom_path() +
+  geom_line() +
   facet_wrap(season~site, scales = "free_x") +
   labs(x = "", y = "Depth (m)",
        title = "Water level") +
@@ -190,7 +190,7 @@ ggplot(logger_join, aes(x = datetime, y = depth_m)) +
 
 
 ggplot(logger_join, aes(x = datetime, y = par_umol_m2_s)) +
-  geom_path() +
+  geom_line() +
   facet_wrap(season~site, scales = "free_x") +
   labs(x = "", y = expression("PAR ("*mu*"mol m"^-2~"s"^-1*")"),
        title = "PAR at the bottom") +
