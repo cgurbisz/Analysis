@@ -442,21 +442,21 @@ flux_data %>% filter(treatment != "AMBIENT") %>%
                                        TRUE ~ ta_rate_mmol_m2_h)) %>%
 ggplot(aes(x = ag, y = ta_rate_mmol_m2_h)) +
   geom_smooth(method = "lm", se = FALSE, color = "gray") +
-  geom_point(aes(color = Site), size = 3) +
+  geom_point(aes(color = light_dark, shape = Site), size = 3) +
   labs(x = expression("SAV biomass (g m"^-2*")"), 
        y = expression("TA flux (mmol m"^-2~"h"^-1*")"),
        color = "",
-       title = "Biomass effect on TA") +
+       title = "Biomass effect on TA", shape = "") +
   lims(y = c(-2.5, 0.8)) +
   stat_regline_equation(aes(label =  paste(..eq.label..)), label.x = 2, label.y = 0.7) +
   stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), 
            label.x = 2, label.y = 0.55) +
-  scale_color_npg() +
+  scale_color_jama() +
   theme_light() +
   theme(legend.position="bottom", legend.box="vertical", legend.margin=margin(), 
         text = element_text(size=20)) 
 
-ggsave("Figures/biomass_ta.png", width = 5, height = 5.5, units = "in", dpi = 300)
+ggsave("Figures/biomass_ta.png", width = 5.5, height = 5.5, units = "in", dpi = 300)
 ```
 
 *use this plot*
@@ -533,7 +533,7 @@ ggplot(aes(x = dic_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color = light_dark)) +
        title = "Oxygen flux effect on TA") +
   geom_hline(yintercept = 0, color = "gray", linetype = "dashed") +
   geom_vline(xintercept = 0, color = "gray", linetype = "dashed") +
-  scale_color_npg() +
+  scale_color_jama() +
   facet_wrap(~Site) +
   geom_abline(slope = c(-0.2, 1, 0.8, 2, 0.1, 4.4, 8), color = "gray") +
   stat_regline_equation(aes(label =  paste(..eq.label..)), label.y = c(-3.5, -4)) +
@@ -543,6 +543,7 @@ ggplot(aes(x = dic_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color = light_dark)) +
         text = element_text(size=20))
 ```
 
+TA vs DIC
 ```{r}
 flux_data %>%
   drop_na(light_dark) %>%
@@ -553,8 +554,50 @@ flux_data %>%
 ggplot(aes(x = dic_rate_mmol_m2_h, y = ta_rate_mmol_m2_h, color =sav)) +
   geom_point(aes(shape = light_dark))+ 
   facet_wrap(~site) +
-  geom_smooth(method = "lm", se = FALSE) +
-  geom_segment(aes(x = -1, y = 0.5, xend = -1.25, yend = -3), color = "#9c9c9c") +
-  geom_text(aes(x = -1.25, y = -3), label = "calc", color = "gray")
+  geom_smooth(method = "lm", se = FALSE) 
+ # geom_segment(aes(x = -1, y = 0.5, xend = -1.25, yend = -3), color = "#9c9c9c") +
+#  geom_text(aes(x = -1.25, y = -3), label = "calc", color = "gray")
+```
+
+Epi vs TA rate
+```{r}
+flux_data %>% filter(treatment != "AMBIENT") %>%
+    mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 1 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h),
+           season == "spring") %>%
+ggplot(aes(x = epi_g, y = ta_rate_mmol_m2_h, color = light_dark)) +
+  geom_point(size = 3)
+```
+
+```{r}
+flux_data %>%
+  drop_na(light_dark) %>%
+  filter(treatment %in% c("SAV-D", "SAV-L", "SED-D", "SED-L")) %>%
+  mutate(ta_rate_mmol_m2_h = case_when(ta_rate_mmol_m2_h < -10 ~ NA,
+                                         ta_rate_mmol_m2_h > 4 ~ NA,
+                                       TRUE ~ ta_rate_mmol_m2_h)) %>%
+#  separate(Site, into = c("river", "salinity")) %>%
+ggplot(aes(x = mean_o2, y = ta_rate_mmol_m2_h)) +
+  lims(x = c(5, 15)) +
+ # facet_wrap(~site) +
+  stat_regline_equation(aes(label =  paste(..eq.label..)), label.x = 11) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), 
+           label.y = 1, 
+           label.x = 11)+
+  geom_point(aes(color = light_dark, shape = Site), size = 3)+ 
+  geom_smooth(method = "lm", se = FALSE, color = "gray") +
+  labs(x = expression("Mean O"[2]~"(mg l"^-1*")"),
+       y = expression("TA flux (mmol m"^-2~"h"^-1*")"), 
+       color = "",
+       shape = "",
+       title = "Oxygen effect on TA") +
+  scale_color_jama() +
+  theme_light() +
+  theme(legend.position = "bottom",
+        legend.box="vertical", legend.margin=margin(),
+        text = element_text(size=20))
+
+ggsave("Figures/o2_conc_ta.png", width = 5.5, height = 5.5, units = "in", dpi = 300)
 ```
 

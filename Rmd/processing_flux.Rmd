@@ -107,6 +107,10 @@ o2_flux <- logger_join %>%
   select(-c(time_h)) %>%
   drop_na(site) %>%
   drop_na(chamber_id)
+
+mean_o2 <- logger_join %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  summarize(mean_o2 = mean(do_mg_l, na.rm = TRUE))
 ```
 
 
@@ -371,6 +375,8 @@ flux_data <-  dic_flux %>%
   full_join(co2_calc) %>%
  full_join(o2_flux) %>%
   full_join(ph_summary) %>%
+  full_join(ph_calc) %>%
+  full_join(mean_o2) %>%
   mutate(month = month(date),
     season = case_when(month %in% 5:6 ~ "spring",
                             month == 8 ~ "summer",
@@ -435,7 +441,12 @@ dic %>%
   summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
             ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
 ggplot(aes(x = dic, y = ta, color = treatment)) +
-  geom_point() +
+  geom_point(aes(shape = sample))
+  
+  
+  
+  
+  
   geom_segment(data = segdat, aes(x = dict1, y = tat1, xend = dict2, yend = tat2),
                arrow = arrow(length = unit(0.1, "inches"))) +
   facet_wrap(~treatment, scales = "free") +
@@ -452,6 +463,22 @@ ggplot(aes(x = dic, y = ta, color = treatment)) +
   geom_text_repel(data = segdat, aes(x = x_dnf, y = y_dnf, label = "dnf"), color = "#9c9c9c") +
   geom_segment(data = segdat, aes(x = dict1, y = tat1, xend = x_no3, yend = y_no3), color = "#9c9c9c") +
   geom_text_repel(data = segdat, aes(x = x_no3, y = y_no3, label = "no3_assim"), color = "#9c9c9c") +
+  theme_light()
+  
+  
+  
+dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         ta_umol_kg = case_when(ta_umol_kg < 1500 & site == "POT_BR"~NA,
+                                ta_umol_kg > 1680 & site == "POT_BR"~NA,
+                                TRUE ~ ta_umol_kg)) %>%
+  filter(site != "POT_FW",
+         treatment %in% c("SAV-D", "SAV-L", "SED-D", "SED-L")) %>%
+ggplot(aes(x = dic_umol_kg, y = ta_umol_kg, color = treatment)) +
+  geom_point(aes(shape = sample), size = 3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~site, scale = "free")+
   theme_light()
 ```
 
