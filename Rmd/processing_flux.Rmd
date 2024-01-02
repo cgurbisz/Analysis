@@ -231,49 +231,65 @@ po4 <- nuts %>%
   filter(parameter == "po4_p_mg_l") %>%
   select(date, id, treatment, replicate, chamber_id, value, sample) %>%
   pivot_wider(names_from = sample, values_from = value) %>%
-  mutate(change_umol_l = (T2 - T1) * 1000/31,
+  mutate(change_mmol_l = (T2 - T1) /31,
          date = mdy(date)) %>%
   select(-T1, -T2) %>%
   left_join(times_discrete) %>%
   left_join(vols) %>%
   left_join(plant_weight) %>%
   mutate(time_change = as.numeric(T2 - T1) / 3600,
-         po4_rate_umol_l_h = change_umol_l / as.numeric(time_change),
-         po4_rate_umol_m2_h = po4_rate_umol_l_h * vol_l / 0.018,
-         po4_rate_umol_g_sav_h = po4_rate_umol_l_h * vol_l / ag) %>%
-  select(date, id, po4_rate_umol_l_h, po4_rate_umol_m2_h, po4_rate_umol_g_sav_h)
+         po4_rate_mmol_l_h = change_mmol_l / as.numeric(time_change),
+         po4_rate_mmol_m2_h = po4_rate_mmol_l_h * vol_l / 0.018,
+         po4_rate_mmol_g_sav_h = po4_rate_mmol_l_h * vol_l / ag) %>%
+  select(date, id, po4_rate_mmol_l_h, po4_rate_mmol_m2_h, po4_rate_mmol_g_sav_h)
 
 no23 <- nuts %>%
   filter(parameter == "no23_n_mg_l") %>%
   select(date, id, treatment, replicate, chamber_id, value, sample) %>%
   pivot_wider(names_from = sample, values_from = value) %>%
-  mutate(change_umol_l = (T2 - T1) * 1000/14,
+  mutate(change_mmol_l = (T2 - T1) /14,
          date = mdy(date)) %>%
   select(-T1, -T2) %>%
   left_join(times_discrete) %>%
   left_join(vols) %>%
   left_join(plant_weight) %>%
   mutate(time_change = as.numeric(T2 - T1) / 3600,
-         no23_rate_umol_l_h = change_umol_l / as.numeric(time_change),
-         no23_rate_umol_m2_h = no23_rate_umol_l_h * vol_l / 0.018,
-         no23_rate_umol_g_sav_h = no23_rate_umol_l_h * vol_l / ag) %>%
-  select(date, id, no23_rate_umol_l_h, no23_rate_umol_m2_h, no23_rate_umol_g_sav_h)
+         no23_rate_mmol_l_h = change_mmol_l / as.numeric(time_change),
+         no23_rate_mmol_m2_h = no23_rate_mmol_l_h * vol_l / 0.018,
+         no23_rate_mmol_g_sav_h = no23_rate_mmol_l_h * vol_l / ag) %>%
+  select(date, id, no23_rate_mmol_l_h, no23_rate_mmol_m2_h, no23_rate_mmol_g_sav_h)
 
 nh3 <- nuts %>%
   filter(parameter == "nh3_n_mg_l") %>%
   select(date, id, treatment, replicate, chamber_id, value, sample) %>%
   pivot_wider(names_from = sample, values_from = value) %>%
-  mutate(change_umol_l = (T2 - T1) * 1000/14,
+  mutate(change_mmol_l = (T2 - T1) /14,
          date = mdy(date)) %>%
   select(-T1, -T2) %>%
   left_join(times_discrete) %>%
   left_join(vols) %>%
   left_join(plant_weight) %>%
   mutate(time_change = as.numeric(T2 - T1) / 3600,
-         nh3_rate_umol_l_h = change_umol_l / as.numeric(time_change),
-         nh3_rate_umol_m2_h = nh3_rate_umol_l_h * vol_l / 0.018,
-         nh3_rate_umol_g_sav_h = nh3_rate_umol_l_h * vol_l / ag) %>%
-  select(date, id, nh3_rate_umol_l_h, nh3_rate_umol_m2_h, nh3_rate_umol_g_sav_h)
+         nh3_rate_mmol_l_h = change_mmol_l / as.numeric(time_change),
+         nh3_rate_mmol_m2_h = nh3_rate_mmol_l_h * vol_l / 0.018,
+         nh3_rate_mmol_g_sav_h = nh3_rate_mmol_l_h * vol_l / ag) %>%
+  select(date, id, nh3_rate_mmol_l_h, nh3_rate_mmol_m2_h, nh3_rate_mmol_g_sav_h)
+
+so4 <- nuts %>%
+  filter(parameter == "so4_mg_l") %>%
+  select(date, id, treatment, replicate, chamber_id, value, sample) %>%
+  pivot_wider(names_from = sample, values_from = value) %>%
+  mutate(change_mmol_l = (T2 - T1) /96.06,
+         date = mdy(date)) %>%
+  select(-T1, -T2) %>%
+  left_join(times_discrete) %>%
+  left_join(vols) %>%
+  left_join(plant_weight) %>%
+  mutate(time_change = as.numeric(T2 - T1) / 3600,
+         so4_rate_mmol_l_h = change_mmol_l / as.numeric(time_change),
+         so4_rate_mmol_m2_h = so4_rate_mmol_l_h * vol_l / 0.018,
+         so4_rate_mmol_g_sav_h = so4_rate_mmol_l_h * vol_l / ag) %>%
+  select(date, id, so4_rate_mmol_l_h, so4_rate_mmol_m2_h, so4_rate_mmol_g_sav_h)
 ```
 
 Calculate other co2sys params and fluxes
@@ -362,6 +378,29 @@ ph_calc <- co2sys %>%
   select(date, id, ph_change_calc)
 ```
 
+```{r}
+omega_change <- co2sys %>%
+  select(date, id, treatment, chamber_id, density, sample, omega_aragonite) %>%
+  pivot_wider(names_from = sample, values_from = omega_aragonite) %>%
+  mutate(change = (T2 - T1)) %>%
+  select(-T1, -T2) %>%
+  left_join(times_discrete) %>%
+  left_join(vols) %>%
+  left_join(plant_weight) %>%
+  mutate(time_change = as.numeric(T2 - T1) / 3600,
+         omega_change = change / as.numeric(time_change)) %>%
+  select(date, id, omega_change)
+```
+
+```{r}
+omega_mean <- co2sys %>%
+  group_by(date, id, site, treatment, chamber_id) %>%
+  summarize(omega_calcite = mean(omega_calcite, na.rm = TRUE),
+            omega_aragonite = mean(omega_aragonite, na.rm = TRUE))
+```
+
+
+
 Join flux data
 ```{r}
 flux_data <-  dic_flux %>%
@@ -370,13 +409,16 @@ flux_data <-  dic_flux %>%
   full_join(po4) %>%
   full_join(no23) %>%
   full_join(nh3) %>%
+  full_join(so4) %>%
   full_join(hco3) %>%
   full_join(co3) %>%
   full_join(co2_calc) %>%
- full_join(o2_flux) %>%
-  full_join(ph_summary) %>%
+ left_join(o2_flux) %>%
+  left_join(ph_summary) %>%
   full_join(ph_calc) %>%
-  full_join(mean_o2) %>%
+  left_join(mean_o2) %>%
+  left_join(omega_change) %>%
+  left_join(omega_mean) %>%
   mutate(month = month(date),
     season = case_when(month %in% 5:6 ~ "spring",
                             month == 8 ~ "summer",
@@ -388,7 +430,135 @@ Save data
 save(flux_data, file = "Data/flux_data.RData")
 ```
 
+
+
+Change in aragonite saturation
+```{r}
+co2sys %>%
+         mutate(light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light"),
+                treatment = case_when(str_detect(treatment, "SAV") ~ "SAV",
+                                      str_detect(treatment, "SED") ~ "SED",
+                                      str_detect(treatment, "W") ~ "W"),
+                month = month(date),
+    season = case_when(month %in% 5:6 ~ "spring",
+                            month == 8 ~ "summer",
+                            month == 10 ~ "fall")) %>%
+  filter(season == "spring") %>%
+ggplot(aes(x = sample, y = omega_aragonite, color = treatment, group = id)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line() +
+  facet_grid(light_dark~site, scales = "free") +
+  theme_light() 
+
+co2sys %>%
+         mutate(light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light"),
+                treatment = case_when(str_detect(treatment, "SAV") ~ "SAV",
+                                      str_detect(treatment, "SED") ~ "SED",
+                                      str_detect(treatment, "W") ~ "W"),
+                month = month(date),
+    season = case_when(month %in% 5:6 ~ "spring",
+                            month == 8 ~ "summer",
+                            month == 10 ~ "fall")) %>%
+  filter(season == "summer") %>%
+#  group_by(site, season, treatment, light_dark, sample) %>%
+#  summarize(omega = mean(omega_aragonite, na.rm = TRUE)) %>%
+ggplot(aes(x = sample, y = omega_aragonite, color = treatment, group = id)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line() +
+  facet_grid(light_dark~site, scales = "free") +
+  theme_light() 
+```
+
+
+
+
+```{r}
+dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light")) %>%
+  ggplot(aes(x = dic_umol_kg, y = ta_umol_kg, color = treatment)) +
+  geom_point(size = 3, alpha = 0.8)
+```
+
 DIC-TA plot YOR_BR
+```{r}
+p1 <- dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light")) %>%
+  filter(season == "summer",
+         light_dark == "light") %>%
+  group_by(site, season, treatment, light_dark, sample) %>%
+  summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
+            ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
+ggplot(aes(x = dic, y = ta, color = treatment)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line(arrow = arrow(angle = 15, ends = "last", type = "open", length = unit(0.6, units = "cm"))) +
+  facet_wrap(~site, scales = "free", ncol = 4) +
+  theme_light() 
+  
+
+p2 <- dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light")) %>%
+  filter(season == "summer",
+         light_dark == "dark") %>%
+  group_by(site, season, treatment, light_dark, sample) %>%
+  summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
+            ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
+ggplot(aes(x = dic, y = ta, color = treatment)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line(arrow = arrow(angle = 15, ends = "last", type = "open", length = unit(0.6, units = "cm"))) +
+  facet_wrap(~site, scales = "free", ncol = 4) +
+  theme_light() 
+
+p3 <- dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light")) %>%
+  filter(season == "spring",
+         light_dark == "light") %>%
+  group_by(site, season, treatment, light_dark, sample) %>%
+  summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
+            ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
+ggplot(aes(x = dic, y = ta, color = treatment)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line(arrow = arrow(angle = 15, ends = "last", type = "open", length = unit(0.6, units = "cm"))) +
+  facet_wrap(~site, scales = "free", ncol = 4) +
+  theme_light() 
+  
+
+p4 <- dic %>%
+  left_join(ta) %>%
+  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3,
+         light_dark = case_when(treatment %in% c("SAV-D", "SED-D", "W-D") ~ "dark",
+                                treatment %in% c("SAV-L", "SED-L", "W-L") ~ "light")) %>%
+  filter(season == "spring",
+         light_dark == "dark") %>%
+  group_by(site, season, treatment, light_dark, sample) %>%
+  summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
+            ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
+ggplot(aes(x = dic, y = ta, color = treatment)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_line(arrow = arrow(angle = 15, ends = "last", type = "open", length = unit(0.6, units = "cm"))) +
+  facet_wrap(~site, scales = "free", ncol = 4) +
+  theme_light() 
+
+p3 + p1
+
+p4 + p2
+
+p1 + p2 + p3 + p4
+```
+
 ```{r}
 tawide <- dic %>%
   left_join(ta) %>%
@@ -417,7 +587,7 @@ dicwide <- dic %>%
   summarize(dic = mean(dic_umol_kg, na.rm = TRUE)) %>%
   pivot_wider(names_from = sample, values_from = dic) %>%
   rename(dict1 = T1, dict2 = T2)
-  
+
 segdat <- left_join(tawide, dicwide) %>%
   mutate(dist = sqrt((dict2-dict1)^2 + (tat2-tat1)^2),
         x_aerresp = dict1 + dist / sqrt(1+-0.2^2),
@@ -433,23 +603,8 @@ segdat <- left_join(tawide, dicwide) %>%
         x_dnf = dict1 - dist / sqrt(1+0.8^2),
         y_dnf = tat1 - (0.8 * dist) / sqrt(1+0.8^2))
 
-dic %>%
-  left_join(ta) %>%
-  mutate(dic_umol_kg = dic_mmol *1000*1000/water_kg_m3) %>%
-  filter(site == "YOR_BR") %>%
-  group_by(treatment, sample) %>%
-  summarize(dic = mean(dic_umol_kg, na.rm = TRUE),
-            ta = mean(ta_umol_kg, na.rm = TRUE)) %>%
-ggplot(aes(x = dic, y = ta, color = treatment)) +
-  geom_point(aes(shape = sample))
-  
-  
-  
-  
-  
   geom_segment(data = segdat, aes(x = dict1, y = tat1, xend = dict2, yend = tat2),
                arrow = arrow(length = unit(0.1, "inches"))) +
-  facet_wrap(~treatment, scales = "free") +
   labs(x = expression("DIC ("*mu*"mol kg"^-1*")"), y = expression("TA ("*mu*"mol kg"^-1*")")) +
   geom_segment(data = segdat, aes(x = dict1, y = tat1, xend = x_aerresp, yend = y_aerresp), color = "#9c9c9c") +
   geom_text_repel(data = segdat, aes(x = x_aerresp, y = y_aerresp, label = "aer_resp"), color = "#9c9c9c") +
